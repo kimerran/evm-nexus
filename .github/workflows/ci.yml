@@ -25,6 +25,10 @@ jobs:
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
+        # Fetch git submodules (Foundry deps: OpenZeppelin + forge-std under
+        # packages/contracts/lib) so `forge build`/`forge test` resolve imports.
+        with:
+          submodules: recursive
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
