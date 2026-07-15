@@ -21,6 +21,8 @@ packages/contracts/broadcast/
 coverage/
 playwright-report/
 test-results/
+# Playwright global-setup writes the worker PID here to tear it down after E2E.
+e2e/.worker.pid
 
 # env & secrets
 .env
