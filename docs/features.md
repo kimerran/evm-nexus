@@ -3,6 +3,64 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Transaction bombardment (throughput stress) (#14)
+
+High-throughput transaction stress testing at a target TPS, landing in the #13
+`/lab` shell by flipping the reserved `bombard` registry slot (no shell rewrite).
+Bulk txs are native transfers signed IN-BROWSER (CLIENT_SIGNED); the server gets
+only raw signed txs and paces them from a worker — the private key never leaves
+the client (AGENT §0/§5, SPEC §8.7/§9). Relayer mode (operator key, worker-only)
+is wired behind a target allow-list. Abuse guards are enforced SERVER-SIDE.
+
+- **Shared bombard lib** (`apps/web/lib/bombard/`): `policy.ts` (PURE) is the
+  single authority for the hard ceilings (`evaluateBombardCeilings`: kill-switch,
+  targetTps ≤ cap, totalCount ≤ cap, per-tx value cap, relayer allow-list) plus the
+  run-status classification (`isActiveRunStatus` — the concurrency-1 guard) and
+  control transitions (`canApplyAction`). `token-bucket.ts` (PURE) paces emission
+  to `targetTps` (starts empty for tight convergence; burst reserved for catch-up).
+  `backpressure.ts` (PURE) is an AIMD controller: RPC 429/timeout multiplicatively
+  REDUCES the rate + backs off exponentially (never fails the run), success
+  recovers it toward target; `isBackpressureError` classifies retry-vs-fail.
+  `ceilings.ts` loads `bombard.*` AppSettings — env `BOMBARD_MAX_TPS`/`MAX_TOTAL`
+  are the ABSOLUTE caps an AppSetting may only tighten (`Math.min`), never widen.
+  `draft.ts` mints an opaque HMAC-signed PLAN token pinning userId/run/network/
+  chainId/mode/from/to/valuePerTx/nonce-range/gas/fees. `verify.ts` samples the
+  signed batch (count + first/last tx: chainId/to/value/nonce/signer) against the
+  plan. `keys.ts`/`context.ts`/`dto.ts`/`sign-client.ts`/`bombard-event.ts` round
+  out queue+Redis keys, active-network resolution, serialization, the browser bulk
+  signer, and the telemetry shape. Money is bigint/wei-string throughout.
+- **API** (`app/api/bombard/…`): `POST /prepare` (`requireAuth`+CSRF, zod, rate-
+  limit) validates ceilings, verifies live chainId, reads the pending nonce, creates
+  a QUEUED `BombardRun`, and returns the nonce range + tx template + signed plan for
+  the client to bulk pre-sign. `POST /start` verifies the plan (owner/run/expiry),
+  re-checks the kill-switch + active chain, samples the signed batch, then ATOMICALLY
+  enforces per-user concurrency 1 (reject if another RUNNING/PAUSED run) while
+  flipping QUEUED→RUNNING, stages the plan + raw txs in Redis, and enqueues
+  `bombard-runner`. `POST /:id/pause|resume|cancel` raise a fast Redis control
+  signal + set the authoritative status (resume re-enforces concurrency + re-enqueues).
+  `GET /:id` and `GET /:id/events` (cursor-paginated) are user-scoped.
+- **`bombard-runner` worker** (`worker/bombard/process-run.ts`, registered in
+  `worker/index.ts` alongside faucet-drip/deploy-watch/tx-watch): token-bucket
+  pacing to `targetTps`; concurrency 1 PER USER via a refreshed per-user Redis lock
+  (global BullMQ concurrency lets distinct users run in parallel); CLIENT_SIGNED
+  broadcasts the pre-signed txs from the Redis list (nonces baked in), RELAYER signs
+  with the operator key using a locally-managed contiguous nonce; records a
+  `BombardEvent` per tx (txHash/nonce/latency), flushes run counters + publishes
+  `bombard` telemetry (~500 ms); backpressure REDUCES throughput on RPC 429/timeout;
+  resumes from the persisted `sentCount`; cancel/pause observed within a tick.
+- **`/lab` Bombard panel** (`components/bombard/bombard-panel.tsx`, registry entry
+  flipped to `available`): TPS slider, total-count + value-per-tx inputs, estimated
+  gas read-out, keypair unlock, initiate/pause/resume/kill, and live counters over
+  the telemetry SSE `bombard` channel (with a fallback poll). Bulk-signs in-browser.
+- **Abuse guards / chain safety**: hard TPS + total ceilings (env-capped), per-user
+  concurrency 1, a global `bombard.enabled` kill-switch, relayer-mode target allow-
+  listing, active-network-only + live-chainId verification before any broadcast, and
+  the operator key confined to `worker/`. Tests (Vitest, PURE): ceiling rejection,
+  single-active classification, token-bucket pacing ≈ target, backpressure reduces
+  rate + error classification, control transitions. Proven live on anvil: N=50 @
+  targetTps=10 → 50/50 sent+confirmed, on-chain nonce +50, block +50, measured ≈9.8
+  TPS; ceiling / single-run(409) / cancel(stops early) / kill-switch all rejected.
+
 ## 2026-07-15 — Transfers (native + assets) & Tx Lab shell (#13)
 
 Non-custodial asset transfers reusing the #12 prepare→sign→broadcast pattern: the
