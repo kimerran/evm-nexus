@@ -3,6 +3,69 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — On-chain chat + file storage (#15)
+
+Tamper-evident on-chain chat: messages live off-chain, a keccak256 hash of each
+is committed on-chain via a stateless `ChatLog` event logger, and any stored
+message can be verified against its on-chain commitment. Plus a driver-agnostic
+file-storage abstraction (MinIO/S3 or fs volume) with signed, time-limited URLs
+and magic-byte upload validation. The `/lab` `chat` slot is flipped to available;
+a dedicated `/chat` page ships too. All signing is IN-BROWSER (AGENT §0) — the
+server only ever receives a raw signed commit tx.
+
+- **`ChatLog` contract** (`packages/contracts/src/ChatLog.sol`): needs no
+  OpenZeppelin — `commit(bytes32 contentHash, string ref)` emits
+  `MessageCommitted(address indexed sender, bytes32 indexed contentHash, uint256
+  timestamp, string ref)`. `forge test` (`test/ChatLog.t.sol`) covers the emit,
+  msg.sender/block.timestamp, and multiple/independent commits. The artifact is
+  exported (`export-artifacts.mjs` extended) to `packages/contracts/artifacts/`
+  and mirrored into `@nexus/types` (`packages/types/src/contracts/ChatLog.ts`).
+  Deployed once per network by an admin/one-time path
+  (`apps/web/scripts/deploy-chatlog.ts`); the address is stored in the existing
+  `AppSetting` key-value model (`chat.chatLogAddress:<networkId>`) — no migration.
+- **Chat lib** (`apps/web/lib/chat/`): `hash.ts` (PURE, shared with the worker)
+  computes `keccak256` of the body (+ attachment key) and builds the `commit`
+  calldata; `chatlog.ts` reads/writes the deployed address; `draft.ts` mints an
+  opaque HMAC-signed commit draft pinning userId/network/chainId/messageId/
+  contentHash/from/txTo(ChatLog)/txValue(0)/data/ceilings; `verify.ts`
+  independently re-verifies a raw SIGNED commit (to==ChatLog, value==0,
+  data==pinned, chainId, ceilings, signer==from) before broadcast; `onchain.ts`
+  decodes the `MessageCommitted` event from the commit receipt; `ceilings.ts`,
+  `context.ts`, `schema.ts`, `dto.ts`, `keys.ts` round out limits, active-network
+  resolution, zod validation, serialization, and worker queue keys.
+- **APIs**: `GET/POST /api/chat` (list; store off-chain + return `{ messageId,
+  contentHash, unsignedCommitTx, commitDraftId }`), `POST /api/chat/:id/commit`
+  (client-signed broadcast OR the budget-capped relayer alternative),
+  `GET /api/chat/:id/verify` (recompute keccak256 of the stored body → compare to
+  the on-chain hash → `{ verified, onchainHash, txHash }`). RBAC + CSRF +
+  per-user/IP rate-limit (`lib/rate-limit` `chat` bucket) enforced; commits are
+  audit-logged (`lib/audit`).
+- **StorageService** (`apps/web/lib/storage/`): one interface, two drivers —
+  `volume` (fs under `STORAGE_VOLUME_PATH`, signed local URLs via an HMAC token)
+  and `s3`/MinIO (self-contained SigV4 presigner, no aws-sdk) — selected by
+  `STORAGE_DRIVER`. `POST /api/files/presign` validates declared MIME + size and
+  issues a signed upload URL; `GET /api/files/:key` re-checks auth + ownership,
+  validates the bytes by MAGIC NUMBER against the type declared in the key
+  (rejecting a lie about `Content-Type` with 415), then 302-redirects to a fresh
+  signed, time-limited download URL. Files live outside the webroot and are never
+  inlined or executed.
+- **Worker**: `chat-commit` relayer processor (`worker/chat/process-commit.ts`,
+  operator key worker-only, rolling per-day budget cap) and the shared `tx-watch`
+  queue extended (`processChatCommitWatch`) to finalize a committed message's
+  receipt; both registered in `worker/index.ts`.
+- **UI**: `/chat` page + reusable `ChatPanel` (composer, in-browser sign, message
+  list with each message's contentHash + a verify badge, attachment upload); the
+  `/lab` `chat` registry slot flipped to available.
+- **Tests** (Vitest): magic-byte upload validation (accept PNG, reject bad-MIME /
+  oversize / magic mismatch); hash commit→verify round-trip incl. a tampered body
+  and tampered-data/redirected-target/wrong-chain/value-moving commit rejections;
+  draft encode/decode + tamper + expiry.
+- **Security invariants**: tamper-evidence (recompute-and-compare against the
+  on-chain hash); the server never sees a private key on the client path (raw
+  signed commit only, independently re-verified); uploads validated by magic
+  bytes not just extension; signed, time-limited serve URLs; files stored outside
+  the webroot, never executed/inlined; relayer key worker-only + budget-capped.
+
 ## 2026-07-15 — Transaction bombardment (throughput stress) (#14)
 
 High-throughput transaction stress testing at a target TPS, landing in the #13

@@ -31,3 +31,11 @@ function txQueue(): Queue<TxWatchJobData> {
 export async function enqueueTxWatch(transferId: string): Promise<void> {
   await txQueue().add(TX_WATCH_QUEUE, { transferId }, { jobId: transferId });
 }
+
+/**
+ * Enqueue receipt polling for an already-broadcast chat commit tx (#15). Shares
+ * the `tx-watch` queue; the worker branches on `chatMessageId`. Idempotent by id.
+ */
+export async function enqueueChatCommitWatch(chatMessageId: string): Promise<void> {
+  await txQueue().add(TX_WATCH_QUEUE, { chatMessageId }, { jobId: `chatwatch-${chatMessageId}` });
+}

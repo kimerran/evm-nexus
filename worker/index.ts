@@ -13,9 +13,11 @@ import { FAUCET_DRIP_QUEUE, type FaucetDripJobData } from '../apps/web/lib/fauce
 import { DEPLOY_WATCH_QUEUE, type DeployWatchJobData } from '../apps/web/lib/deployments/keys';
 import { TX_WATCH_QUEUE, type TxWatchJobData } from '../apps/web/lib/transfers/keys';
 import { BOMBARD_RUNNER_QUEUE, type BombardRunnerJobData } from '../apps/web/lib/bombard/keys';
+import { CHAT_COMMIT_QUEUE, type ChatCommitJobData } from '../apps/web/lib/chat/keys';
 import { processFaucetDrip } from './faucet/process-drip';
 import { processDeployWatch } from './deploy/process-watch';
-import { processTxWatch } from './tx/process-watch';
+import { processTxWatch, processChatCommitWatch } from './tx/process-watch';
+import { processChatCommit } from './chat/process-commit';
 import { processBombardRun } from './bombard/process-run';
 
 function log(event: string, fields: Record<string, unknown>): void {
@@ -31,7 +33,13 @@ function isFinalAttempt(job: Job): boolean {
 function main(): void {
   const env = getEnv();
   log('worker.online', {
-    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE, TX_WATCH_QUEUE, BOMBARD_RUNNER_QUEUE],
+    queues: [
+      FAUCET_DRIP_QUEUE,
+      DEPLOY_WATCH_QUEUE,
+      TX_WATCH_QUEUE,
+      BOMBARD_RUNNER_QUEUE,
+      CHAT_COMMIT_QUEUE,
+    ],
     nodeEnv: env.NODE_ENV,
   });
 
@@ -82,9 +90,23 @@ function main(): void {
     log('worker.error', { queue: DEPLOY_WATCH_QUEUE, error: err.message });
   });
 
+  // tx-watch is SHARED: a job carries EITHER a transferId (transfers) OR a
+  // chatMessageId (chat commits, #15); branch on which id is present.
   const txWorker = new Worker<TxWatchJobData>(
     TX_WATCH_QUEUE,
     async (job) => {
+      if ('chatMessageId' in job.data) {
+        const result = await processChatCommitWatch(job.data.chatMessageId, {
+          finalAttempt: isFinalAttempt(job),
+        });
+        log('chat.watch.processed', {
+          chatMessageId: result.chatMessageId,
+          status: result.status,
+          txHash: result.txHash ?? null,
+          note: result.note ?? null,
+        });
+        return result;
+      }
       const result = await processTxWatch(job.data.transferId, {
         finalAttempt: isFinalAttempt(job),
       });
@@ -100,10 +122,37 @@ function main(): void {
   );
 
   txWorker.on('failed', (job, err) => {
-    log('tx.watch.failed', { transferId: job?.data.transferId ?? null, error: err.message });
+    const id = job?.data
+      ? 'chatMessageId' in job.data
+        ? job.data.chatMessageId
+        : job.data.transferId
+      : null;
+    log('tx.watch.failed', { id, error: err.message });
   });
   txWorker.on('error', (err) => {
     log('worker.error', { queue: TX_WATCH_QUEUE, error: err.message });
+  });
+
+  const chatCommitWorker = new Worker<ChatCommitJobData>(
+    CHAT_COMMIT_QUEUE,
+    async (job) => {
+      const result = await processChatCommit(job.data.messageId);
+      log('chat.commit.processed', {
+        messageId: result.messageId,
+        status: result.status,
+        txHash: result.txHash ?? null,
+        note: result.note ?? null,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 2 },
+  );
+
+  chatCommitWorker.on('failed', (job, err) => {
+    log('chat.commit.failed', { messageId: job?.data.messageId ?? null, error: err.message });
+  });
+  chatCommitWorker.on('error', (err) => {
+    log('worker.error', { queue: CHAT_COMMIT_QUEUE, error: err.message });
   });
 
   // bombard-runner. Global concurrency lets DISTINCT users run in parallel; the
@@ -139,6 +188,7 @@ function main(): void {
       deployWorker.close(),
       txWorker.close(),
       bombardWorker.close(),
+      chatCommitWorker.close(),
     ]).then(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

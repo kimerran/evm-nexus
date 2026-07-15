@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const contracts = ["NexusERC20", "NexusERC721", "NexusERC1155"];
+const contracts = ["NexusERC20", "NexusERC721", "NexusERC1155", "ChatLog"];
 const outDir = join(root, "artifacts");
 // Typed, viem-friendly (`as const`) mirrors live in @nexus/types so the app can
 // import ABIs + bytecode with full literal typing and no Solidity build step.

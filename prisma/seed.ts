@@ -111,6 +111,14 @@ async function seedAppSettings(prisma: PrismaClient): Promise<void> {
     'transfer.maxGas': '500000',
     'transfer.maxValueWei': '1000000000000000000000',
     'transfer.maxFeePerGasWei': '1000000000000',
+    // On-chain chat commit ceilings + kill-switch (SPEC §8.8, AGENT.md §5). A
+    // ChatLog.commit is a non-payable event log, so maxValueWei is enforced as 0
+    // in code; gas is bounded tightly. `chat.relayerDailyCap` caps the operator-
+    // relayed (budget-capped) alternative to a client-signed commit.
+    'chat.enabled': true,
+    'chat.maxGas': '200000',
+    'chat.maxFeePerGasWei': '1000000000000',
+    'chat.relayerDailyCap': 200,
   };
 
   for (const [key, value] of Object.entries(baseline)) {
