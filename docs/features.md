@@ -3,6 +3,42 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — User & API-key management + audit log (#6)
+
+Settings surfaces + endpoints for user administration, personal API keys, and the
+audit trail, all on the #5 security spine.
+
+- **Audit writer** (`apps/web/lib/audit.ts`): `writeAudit({ actorId, action, target?,
+  metadata?, ip? })` — the single reusable writer every privileged action records
+  through (user activate/deactivate/role-change/password-reset, api-key issue/revoke;
+  #7's network mutations wire in after merge). Maps `target` → `targetType`/`targetId`,
+  is best-effort (a failed write is logged, never thrown, so audit can't break the
+  action), and NEVER puts secrets in metadata (caller contract, restated at every call
+  site — only ids/names/prefixes/roles).
+- **User management** (`/settings/users`, ADMIN): `GET /api/users` (list, never selects
+  `passwordHash`), `PATCH /api/users/[id]` (activate/deactivate, role change — with a
+  self-lockout guard), `POST /api/users/[id]/reset-password` (fresh argon2id via
+  `lib/auth/password`, then revokes all the target's sessions). All `requireRole('ADMIN')`
+  + CSRF; each applied change writes an audit row.
+- **Personal API keys** (`/settings/api-keys`, USER): `GET /api/api-keys` (masked — only
+  the display `prefix`, never the hash), `POST /api/api-keys` (issues via
+  `lib/auth/api-key`; the raw `nxs_…` token is returned exactly ONCE and only its sha256
+  hash is stored), `DELETE /api/api-keys/[id]` (soft-revoke; owner-only, foreign keys 404).
+  `requireAuth` + CSRF; issue/revoke audited (name + prefix only).
+- **Audit viewer** (`/settings/audit`, ADMIN): paginated UI over the existing
+  `GET /api/audit` (extended to join the actor username; cursor pagination already present).
+- **CSRF plumbing**: `lib/csrf-client.ts` (`csrfFetch` reads the readable `nexus_csrf`
+  cookie → `x-csrf-token`) and `lib/auth/mutation-guard.ts` (`requireCsrfUnlessApiKey` —
+  CSRF on the cookie path, exempt for non-ambient Bearer API-key callers).
+- **Tests** (Vitest): api-key verification is one-way (lookup by sha256 hash; the raw
+  token never appears in the query; revoked key → null); `writeAudit` maps fields, stores
+  metadata verbatim with no injected secrets, and is best-effort; the `/api/users/[id]`
+  handler writes an audit row on an admin action and returns 403 (no write, no audit) for
+  a USER. Live-verified end to end: admin deactivate/reactivate + role change (CSRF; no-CSRF
+  → 403), USER issues a key → authenticates `GET /api/me` (200) → revokes → same key 401,
+  USER → `/api/users` & `/api/audit` 403, and the audit log shows every action with no
+  secrets in metadata.
+
 ## 2026-07-15 — AuthZ, CSRF, rate-limiting & security headers (#5)
 
 The security spine every downstream feature imports.
