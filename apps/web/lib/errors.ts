@@ -53,6 +53,13 @@ export class NotFoundError extends AppError {
   }
 }
 
+/** 409 — request conflicts with the current state (e.g. deleting a network in use). */
+export class ConflictError extends AppError {
+  constructor(message = 'The request conflicts with the current state.') {
+    super(409, 'CONFLICT', message);
+  }
+}
+
 /** 429 — rate limit exceeded; carries the retry hint. */
 export class RateLimitError extends AppError {
   readonly retryAfterSec: number;
