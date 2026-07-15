@@ -7,7 +7,7 @@
 import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { prisma } from './prisma';
-import { getFaucetPrivateKey } from './config';
+import { getFaucetPrivateKey, getRelayerPrivateKey } from './config';
 
 /** Decoded faucet network config for the worker (wei as bigint). */
 export interface WorkerFaucetNetwork {
@@ -100,9 +100,8 @@ export async function loadNetworkBasic(networkId: string): Promise<WorkerNetwork
   };
 }
 
-/** Build a read-only public client for a network (no signer). */
-export function buildPublicClientForNetwork(network: WorkerNetwork) {
-  const chain = defineChain({
+function toBasicChain(network: WorkerNetwork) {
+  return defineChain({
     id: network.chainId,
     name: network.name,
     nativeCurrency: {
@@ -112,5 +111,22 @@ export function buildPublicClientForNetwork(network: WorkerNetwork) {
     },
     rpcUrls: { default: { http: [network.rpcUrl] } },
   });
-  return createPublicClient({ chain, transport: http(network.rpcUrl) });
+}
+
+/** Build a read-only public client for a network (no signer). */
+export function buildPublicClientForNetwork(network: WorkerNetwork) {
+  return createPublicClient({ chain: toBasicChain(network), transport: http(network.rpcUrl) });
+}
+
+/**
+ * Build the public + RELAYER-signed wallet clients for a network. Used ONLY by
+ * the bombard-runner in RELAYER mode — the operator key is loaded here and never
+ * in the web app (prime directive). Client-signed runs use only the public client.
+ */
+export function buildRelayerClients(network: WorkerNetwork) {
+  const chain = toBasicChain(network);
+  const account = privateKeyToAccount(getRelayerPrivateKey());
+  const publicClient = createPublicClient({ chain, transport: http(network.rpcUrl) });
+  const walletClient = createWalletClient({ account, chain, transport: http(network.rpcUrl) });
+  return { account, publicClient, walletClient };
 }

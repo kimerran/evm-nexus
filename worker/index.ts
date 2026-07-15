@@ -12,9 +12,11 @@ import { getConnection } from './lib/redis';
 import { FAUCET_DRIP_QUEUE, type FaucetDripJobData } from '../apps/web/lib/faucet/keys';
 import { DEPLOY_WATCH_QUEUE, type DeployWatchJobData } from '../apps/web/lib/deployments/keys';
 import { TX_WATCH_QUEUE, type TxWatchJobData } from '../apps/web/lib/transfers/keys';
+import { BOMBARD_RUNNER_QUEUE, type BombardRunnerJobData } from '../apps/web/lib/bombard/keys';
 import { processFaucetDrip } from './faucet/process-drip';
 import { processDeployWatch } from './deploy/process-watch';
 import { processTxWatch } from './tx/process-watch';
+import { processBombardRun } from './bombard/process-run';
 
 function log(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
@@ -29,7 +31,7 @@ function isFinalAttempt(job: Job): boolean {
 function main(): void {
   const env = getEnv();
   log('worker.online', {
-    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE, TX_WATCH_QUEUE],
+    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE, TX_WATCH_QUEUE, BOMBARD_RUNNER_QUEUE],
     nodeEnv: env.NODE_ENV,
   });
 
@@ -104,11 +106,40 @@ function main(): void {
     log('worker.error', { queue: TX_WATCH_QUEUE, error: err.message });
   });
 
+  // bombard-runner. Global concurrency lets DISTINCT users run in parallel; the
+  // per-user Redis lock inside the processor enforces concurrency 1 PER USER.
+  const bombardWorker = new Worker<BombardRunnerJobData>(
+    BOMBARD_RUNNER_QUEUE,
+    async (job) => {
+      const result = await processBombardRun(job.data.runId);
+      log('bombard.run.processed', {
+        runId: result.runId,
+        status: result.status,
+        sentCount: result.sentCount,
+        successCount: result.successCount,
+        failCount: result.failCount,
+        note: result.note ?? null,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 4 },
+  );
+
+  bombardWorker.on('failed', (job, err) => {
+    log('bombard.run.failed', { runId: job?.data.runId ?? null, error: err.message });
+  });
+  bombardWorker.on('error', (err) => {
+    log('worker.error', { queue: BOMBARD_RUNNER_QUEUE, error: err.message });
+  });
+
   const shutdown = (signal: string): void => {
     log('worker.shutdown', { signal });
-    void Promise.all([faucetWorker.close(), deployWorker.close(), txWorker.close()]).then(() =>
-      process.exit(0),
-    );
+    void Promise.all([
+      faucetWorker.close(),
+      deployWorker.close(),
+      txWorker.close(),
+      bombardWorker.close(),
+    ]).then(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

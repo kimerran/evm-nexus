@@ -27,4 +27,21 @@ export function getFaucetPrivateKey(): Hex {
   return key;
 }
 
+/**
+ * Resolve the operator RELAYER private key. Worker-only, used ONLY by the
+ * bombard-runner in RELAYER mode (client mode never touches an operator key).
+ * Throws if unset/malformed so a relayer run fails fast rather than mis-signing.
+ * The value is never logged.
+ */
+export function getRelayerPrivateKey(): Hex {
+  const key = getEnv().RELAYER_PRIVATE_KEY;
+  if (!key) {
+    throw new Error('RELAYER_PRIVATE_KEY is required to run a RELAYER-mode bombard run.');
+  }
+  if (!isHex(key) || key.length !== 66) {
+    throw new Error('RELAYER_PRIVATE_KEY must be a 0x-prefixed 32-byte hex string.');
+  }
+  return key;
+}
+
 export { getEnv };

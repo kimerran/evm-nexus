@@ -14,6 +14,7 @@ import type { ComponentType } from 'react';
 import { Badge } from '@/components/ui';
 import { TransferForm } from '@/components/transfers/transfer-form';
 import { TransfersHistory } from '@/components/transfers/transfers-history';
+import { BombardPanel } from '@/components/bombard/bombard-panel';
 import type { KeypairDto } from '@/lib/keypairs/dto';
 import type { TransferView } from '@/lib/transfers/dto';
 
@@ -118,8 +119,8 @@ export const LAB_PANELS: LabPanelDef[] = [
     label: 'Bombard',
     icon: 'bolt',
     description: 'High-throughput transaction stress testing at a target TPS.',
-    status: 'coming-soon',
-    issue: 14,
+    status: 'available',
+    Component: BombardPanel,
   },
   {
     id: 'chat',

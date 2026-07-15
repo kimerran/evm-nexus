@@ -88,6 +88,13 @@ async function seedAppSettings(prisma: PrismaClient): Promise<void> {
     'bombard.maxTps': env.BOMBARD_MAX_TPS,
     'bombard.maxTotal': env.BOMBARD_MAX_TOTAL,
     'bombard.enabled': true,
+    // Per-tx chain-safety ceilings + the RELAYER-mode target allow-list (SPEC
+    // §4.3/§8.7). Gas/wei stay strings; the allow-list is empty by default so
+    // relayer mode is disabled until an admin adds approved targets.
+    'bombard.maxGasPerTx': '100000',
+    'bombard.maxValuePerTxWei': '1000000000000000000',
+    'bombard.maxFeePerGasWei': '1000000000000',
+    'bombard.allowlist': [],
     'faucet.dripWei': env.FAUCET_DRIP_WEI,
     'faucet.dailyCapWei': env.FAUCET_DAILY_CAP_WEI,
     'faucet.enabled': true,
