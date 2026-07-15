@@ -3,6 +3,41 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Authentication & sessions (#4)
+
+- **Password hashing** (`apps/web/lib/auth/password.ts`): argon2id via
+  `@node-rs/argon2` with a single OWASP-aligned cost set (19 MiB / t=2 / p=1),
+  shared with the seed. `verifyPassword` returns `false` (never throws) and a
+  reusable `DUMMY_PASSWORD_HASH` equalizes login timing so a missing user is
+  indistinguishable from a wrong password.
+- **Signed sessions** (`apps/web/lib/auth/session-token.ts`, `session.ts`):
+  a random 256-bit `sid` is carried inside a **jose** HS256 JWS (keyed by
+  `SESSION_SECRET`, short 30-min TTL with sliding refresh); only `sha256(sid)` is
+  persisted in `Session.tokenHash` for revocation — the raw token/JWS is never
+  stored. Cookie is **httpOnly + SameSite=Strict**, and `Secure` only when
+  `NODE_ENV==='production'` (so local http login works). `getSession()` awaits the
+  async Next 16 `cookies()`, verifies the JWS, then requires a live, non-revoked
+  row and an active user.
+- **Endpoints** (SPEC §8.1): `POST /api/auth/login` (rate-limited, generic errors,
+  no user enumeration), `POST /api/auth/logout` (server-side revoke + clear
+  cookie), `GET /api/auth/session` (`{ user }` or 401, applies sliding refresh),
+  `POST /api/auth/change-password` (verifies current password, rotates the current
+  session, **revokes all other sessions**). All zod-validated (`.strict()`),
+  auth re-checked server-side in every handler.
+- **Login rate limiting** (`apps/web/lib/auth/rate-limit.ts`): self-contained
+  Redis-backed (`ioredis`) fixed-window **failure** counter, per-IP (20/60s) and
+  per-username (5/60s); counts only failures, resets a username on success, fails
+  open on Redis errors, returns `Retry-After`. TODO(#5) generalizes it.
+- **RBAC** (`apps/web/lib/auth/role.ts`): real session→role replaces the Sprint 0
+  stub; `(app)` shell layout now awaits `getSession()` and redirects to `/login`.
+- **Login page** (`apps/web/app/(auth)/login`): public, outside the authenticated
+  `(app)` shell, built from `components/ui` primitives (tokens only).
+- **proxy.ts**: defense-in-depth cookie-presence redirect for non-public pages
+  (never the sole gate — handlers/RSC re-check).
+- Vitest unit tests: argon2 hash+verify + wrong-password; JWS sign/verify +
+  reject tampered/expired/foreign-secret/bad-role; sid hashing; session
+  revocation/validity + sliding-refresh threshold.
+
 ## 2026-07-15 — Data layer: Prisma 7 schema, migrations & seed (#2)
 
 - Prisma 7 `prisma.config.ts` (explicit dotenv load — Prisma 7 does not auto-load
