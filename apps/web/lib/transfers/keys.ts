@@ -10,11 +10,10 @@
 export const TX_WATCH_QUEUE = 'tx-watch';
 
 /**
- * Payload for a `tx-watch` job. Deliberately minimal — the Transfer row id only.
- * The worker re-reads every authoritative value (txHash, network) from the row,
- * so a stale/forged job body can never redirect a watch. The job id is set to
- * `transferId` for idempotency (BullMQ dedupes).
+ * Payload for a `tx-watch` job. Deliberately minimal — a single row id. The
+ * worker re-reads every authoritative value (txHash, network) from the row, so a
+ * stale/forged job body can never redirect a watch. The job id is set to the row
+ * id for idempotency (BullMQ dedupes). The queue is SHARED: a transfer watch
+ * carries `transferId`; a chat-commit watch (#15) carries `chatMessageId`.
  */
-export interface TxWatchJobData {
-  transferId: string;
-}
+export type TxWatchJobData = { transferId: string } | { chatMessageId: string };

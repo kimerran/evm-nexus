@@ -3,15 +3,18 @@
 export * from "./NexusERC20";
 export * from "./NexusERC721";
 export * from "./NexusERC1155";
+export * from "./ChatLog";
 
 import { NexusERC20Abi, NexusERC20Bytecode } from "./NexusERC20";
 import { NexusERC721Abi, NexusERC721Bytecode } from "./NexusERC721";
 import { NexusERC1155Abi, NexusERC1155Bytecode } from "./NexusERC1155";
+import { ChatLogAbi, ChatLogBytecode } from "./ChatLog";
 
 export const contractArtifacts = {
   NexusERC20: { abi: NexusERC20Abi, bytecode: NexusERC20Bytecode },
   NexusERC721: { abi: NexusERC721Abi, bytecode: NexusERC721Bytecode },
   NexusERC1155: { abi: NexusERC1155Abi, bytecode: NexusERC1155Bytecode },
+  ChatLog: { abi: ChatLogAbi, bytecode: ChatLogBytecode },
 } as const;
 
 export type ContractName = keyof typeof contractArtifacts;

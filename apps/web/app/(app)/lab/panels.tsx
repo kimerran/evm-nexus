@@ -15,8 +15,10 @@ import { Badge } from '@/components/ui';
 import { TransferForm } from '@/components/transfers/transfer-form';
 import { TransfersHistory } from '@/components/transfers/transfers-history';
 import { BombardPanel } from '@/components/bombard/bombard-panel';
+import { ChatPanel } from '@/components/chat/chat-panel';
 import type { KeypairDto } from '@/lib/keypairs/dto';
 import type { TransferView } from '@/lib/transfers/dto';
+import type { ChatMessageView } from '@/lib/chat/dto';
 
 /** Data every lab panel receives from the shell (server-loaded, then live). */
 export interface LabPanelContext {
@@ -100,6 +102,19 @@ function TransferPanel({
   );
 }
 
+/** The On-chain Chat panel — commit message hashes + verify them, in the lab. */
+function LabChatPanel({ networkId, explorerBaseUrl, keypairs }: LabPanelContext) {
+  const initial: ChatMessageView[] = [];
+  return (
+    <ChatPanel
+      networkId={networkId}
+      explorerBaseUrl={explorerBaseUrl}
+      keypairs={keypairs}
+      initialMessages={initial}
+    />
+  );
+}
+
 /**
  * The registry. Order = tab order. Append here to extend the lab. The two
  * `coming-soon` entries reserve #14/#15's slots so their PRs are a one-entry
@@ -127,7 +142,7 @@ export const LAB_PANELS: LabPanelDef[] = [
     label: 'On-chain Chat',
     icon: 'forum',
     description: 'Commit chat messages on-chain and watch them confirm.',
-    status: 'coming-soon',
-    issue: 15,
+    status: 'available',
+    Component: LabChatPanel,
   },
 ];

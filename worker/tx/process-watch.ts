@@ -120,3 +120,66 @@ export async function processTxWatch(
 
   return { transferId, status: success ? 'SUCCESS' : 'FAILED', txHash: row.txHash };
 }
+
+export interface ChatCommitWatchResult {
+  chatMessageId: string;
+  status: string;
+  txHash?: string | null;
+  note?: string;
+}
+
+/**
+ * Process one chat-commit watch job (#15). Reuses the shared `tx-watch` queue but
+ * finalizes a ChatMessage row instead of a Transfer. Read-only on-chain — the
+ * commit tx was already broadcast (client-signed or relayer). Idempotent by id:
+ * a terminal row is a no-op. On the final attempt without a receipt it marks
+ * FAILED so a row is never left stuck CONFIRMING.
+ */
+export async function processChatCommitWatch(
+  chatMessageId: string,
+  opts: { finalAttempt: boolean },
+): Promise<ChatCommitWatchResult> {
+  const row = await prisma.chatMessage.findUnique({ where: { id: chatMessageId } });
+  if (!row) throw new Error(`ChatMessage ${chatMessageId} not found`);
+  if (TERMINAL.has(row.status)) {
+    return { chatMessageId, status: row.status, note: 'already-finalized' };
+  }
+  if (!row.txHash) {
+    // No hash yet (e.g. relayer job still in flight) — retry until it appears.
+    if (opts.finalAttempt) {
+      return { chatMessageId, status: row.status, note: 'no-tx-hash-yet' };
+    }
+    throw new Error(`ChatMessage ${chatMessageId} has no txHash yet`);
+  }
+
+  const network = await loadNetworkBasic(row.networkId);
+  if (!network) throw new Error(`network ${row.networkId} not found`);
+  const publicClient = buildPublicClientForNetwork(network);
+
+  if (row.status === 'PENDING' || row.status === 'BROADCAST') {
+    await prisma.chatMessage.update({ where: { id: chatMessageId }, data: { status: 'CONFIRMING' } });
+  }
+
+  const receipt = await publicClient
+    .waitForTransactionReceipt({
+      hash: row.txHash as `0x${string}`,
+      timeout: RECEIPT_WAIT_MS,
+      pollingInterval: POLL_INTERVAL_MS,
+    })
+    .catch(() => null);
+
+  if (!receipt) {
+    if (opts.finalAttempt) {
+      await prisma.chatMessage.update({ where: { id: chatMessageId }, data: { status: 'FAILED' } });
+      return { chatMessageId, status: 'FAILED', txHash: row.txHash, note: 'receipt-timeout' };
+    }
+    throw new Error(`receipt not ready for ${row.txHash}`);
+  }
+
+  const success = receipt.status === 'success';
+  await prisma.chatMessage.update({
+    where: { id: chatMessageId },
+    data: { status: success ? 'SUCCESS' : 'FAILED' },
+  });
+  return { chatMessageId, status: success ? 'SUCCESS' : 'FAILED', txHash: row.txHash };
+}
