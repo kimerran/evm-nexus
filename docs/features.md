@@ -3,6 +3,41 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Dashboard & live telemetry (#8)
+
+Real network telemetry on the dashboard, backed by an enriched health API, a
+live SSE stream, and a dependency-aware readiness probe.
+
+- **Shared health reader** (`apps/web/lib/chain/health.ts`): `readNetworkHealth(client)`
+  reads chainId, latest block height, gas price, a derived block time, peer count
+  (`net_peerCount`) and txpool status (`txpool_status`) off a resolver-built viem client.
+  Optional methods go through `safeRequest`, which maps a missing method / any error to
+  `null` — a node that lacks them reports the field as unavailable, never a 500. Wei and
+  heights stay strings; `averageBlockTimeSeconds` derives block time with bigint math.
+  Verified live against anvil: `peerCount:null` (unsupported, graceful), `txpool:{…}` present.
+- **`GET /api/networks/:id/health`** (`app/api/networks/[id]/health`): now returns the full
+  telemetry object via the shared reader; a fully unreachable RPC still maps to a clean 502.
+  Proven live: `blockNumber` advanced `5 → 10` after `anvil_mine`, gas/blockTime live.
+- **`GET /api/stream/telemetry`** (`app/api/stream/telemetry`): authenticated SSE stream.
+  Emits a `ready` frame, polls network `health` every 3s, and fans out Redis pub/sub
+  `tx`/`bombard`/`faucet` events (channels in `lib/telemetry/sse.ts`) where publishers exist.
+  A dedicated Redis subscriber connection and both timers are torn down on client
+  disconnect (request abort signal) — no leaked connections. Verified: `ready` + live
+  `health` frames, a published `faucet` event forwarded, unauth → 401, clean disconnect.
+- **`GET /api/health`** (public, `app/api/health`): upgraded from a static `{status:ok}` to
+  a real readiness probe of Postgres, Redis and the active-network RPC. Each runs under a
+  timeout (`lib/health/readiness.ts`); `aggregateReadiness` returns 200 when all up, 503
+  when any is down, with a per-dependency breakdown and coarse, secret-free error labels.
+  Proven: 200 healthy → 503 with `rpc.ok:false` when RPC pointed at a dead port → 200 restored.
+- **`/dashboard`** (`app/(app)/dashboard`): RSC shell (server-fetched first health snapshot +
+  active-account counts) with client islands. `dashboard-live.tsx` subscribes to the SSE
+  stream and falls back to polling `/api/networks/:id/health`, driving live stat cards (gas,
+  block height, block time, peers, txpool) with loading/error states and a live event feed;
+  `connect-provider.tsx` connects an injected EIP-1193 wallet read-only. Keeps the BRAND bento
+  grid; `prefers-reduced-motion` respected via the shared `status-pulse` utility.
+- Client-safe display formatters (`lib/telemetry/format.ts`) reduce wei→gwei with bigint math.
+- 42 new Vitest cases (block-time derivation, hex/txpool parsing + graceful missing-method
+  handling, readiness aggregation/timeout, SSE framing, formatters). All gates green.
 
 ## 2026-07-15 — Network config & viem client resolver (#7)
 
