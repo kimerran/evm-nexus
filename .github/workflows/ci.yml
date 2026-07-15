@@ -12,6 +12,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Job-level env so every step (notably `prisma generate`, which resolves
+    # `env('DATABASE_URL')` when loading prisma.config.ts) sees these values.
+    # These are throwaway CI values — no real secrets. `prisma generate` never
+    # connects to the DB; it only needs the variable to be defined.
+    env:
+      APP_URL: http://localhost:3000
+      SESSION_SECRET: ci-session-secret-ci-session-secret-32
+      ENCRYPTION_KEY: ci-encryption-key-ci-encryption-key-32
+      CSRF_SECRET: ci-csrf-secret-ci-csrf
+      DATABASE_URL: postgresql://nexus:nexus@localhost:5432/evm_nexus?schema=public
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -49,13 +60,6 @@ jobs:
 
       - name: Build
         run: pnpm build
-        env:
-          APP_URL: http://localhost:3000
-          SESSION_SECRET: ci-session-secret-ci-session-secret-32
-          ENCRYPTION_KEY: ci-encryption-key-ci-encryption-key-32
-          CSRF_SECRET: ci-csrf-secret-ci-csrf
-          DATABASE_URL: postgresql://nexus:nexus@localhost:5432/evm_nexus?schema=public
-          REDIS_URL: redis://localhost:6379
 
       - name: Audit
         # Fails on real high/critical advisories. npm retired the legacy audit

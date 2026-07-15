@@ -6,3 +6,4 @@ out/
 cache/
 coverage/
 packages/contracts/out/
+apps/web/lib/generated/

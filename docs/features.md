@@ -3,6 +3,29 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Data layer: Prisma 7 schema, migrations & seed (#2)
+
+- Prisma 7 `prisma.config.ts` (explicit dotenv load — Prisma 7 does not auto-load
+  `.env` — datasource URL, and `tsx prisma/seed.ts` seed command).
+- `prisma/schema.prisma` (SPEC §5): all 13 models (User, Session, Network,
+  Keypair, Deployment, Transfer, BombardRun, BombardEvent, ChatMessage,
+  FaucetRequest, SmartAccount, AuditLog, AppSetting) and all 7 enums (Role,
+  TokenStandard, TransferKind, BombardMode, RunStatus, TxStatus). New
+  `prisma-client` generator → ESM client at `apps/web/lib/generated/prisma`
+  (gitignored). Money is stored as **String (wei)**; no plaintext key columns.
+- Initial migration `20260715055127_init`; forward-only `migrate deploy` for prod.
+- `apps/web/lib/db.ts`: PrismaClient singleton over the `@prisma/adapter-pg`
+  driver adapter (globalThis reuse in dev).
+- `apps/web/lib/crypto/at-rest.ts`: server-only AES-256-GCM at-rest encryption
+  (from `ENCRYPTION_KEY`) for `Network.rpcUrl` credentials + keystore blobs, with
+  round-trip / tamper unit tests.
+- `prisma/seed.ts` (SPEC §16): idempotent — admin (argon2id via `@node-rs/argon2`,
+  password from `ADMIN_PASSWORD`, never hardcoded), default `Network`
+  (`isDefault=true`), baseline `AppSetting` ceilings/kill-switches. Re-running is
+  a no-op.
+- `@nexus/config/env` hardened: empty-string env values (`KEY=`) normalize to
+  unset so blank `.env` lines don't defeat `.optional()`/defaults.
+
 ## 2026-07-15 — Design system & app shell (#3)
 
 - **BRAND tokens → Tailwind v4** (`apps/web/app/globals.css`): full BRAND §2 color

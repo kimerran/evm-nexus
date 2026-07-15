@@ -1,0 +1,308 @@
+// EVM Nexus data model (SPEC §5).
+//
+// Prisma 7: the new `prisma-client` generator emits an ES module client to an
+// explicit `output` path (never node_modules); the datasource URL and .env
+// loading live in `prisma.config.ts` (Prisma 7 does NOT auto-load .env). The
+// runtime connects through the `@prisma/adapter-pg` driver adapter.
+//
+// Money invariant (AGENT.md §4): all amounts/balances are stored as String
+// (wei) — never Float / Decimal / BigInt money columns — to avoid precision
+// loss. `Deployment.blockNumber` is the only BigInt (a block height, not money).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../apps/web/lib/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Auth & tenancy ----------
+model User {
+  id             String    @id @default(cuid())
+  username       String    @unique
+  passwordHash   String // argon2id
+  role           Role      @default(USER)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  sessions       Session[]
+  keypairs       Keypair[]
+  deployments    Deployment[]
+  transfers      Transfer[]
+  bombardRuns    BombardRun[]
+  chatMessages   ChatMessage[]
+  faucetRequests FaucetRequest[]
+  auditLogs      AuditLog[]
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+model Session {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // store only a hash of the session token; the signed JWS lives in the cookie
+  tokenHash String    @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+}
+
+// ---------- Network configuration ----------
+model Network {
+  id                String  @id @default(cuid())
+  name              String // "Mainnet-Alpha"
+  chainId           Int
+  rpcUrl            String // encrypted at rest if it carries a key (lib/crypto/at-rest)
+  wsUrl             String?
+  explorerBaseUrl   String? // "https://etherscan.io/"
+  nativeSymbol      String  @default("ETH")
+  nativeDecimals    Int     @default(18)
+  isDefault         Boolean @default(false)
+  isArchival        Boolean @default(false)
+  faucetEnabled     Boolean @default(true)
+  faucetDripAmount  String  @default("5000000000000000000") // wei, string to avoid bigint loss
+  faucetDailyCap    String  @default("500000000000000000000")
+  faucetCooldownSec Int     @default(86400)
+  // server-custodied signer refs (ids into a secret store; NOT the keys themselves)
+  faucetSignerRef   String?
+  relayerSignerRef  String?
+  paymasterAddress  String?
+  entryPointAddress String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deployments       Deployment[]
+  transfers         Transfer[]
+  bombardRuns       BombardRun[]
+  chatMessages      ChatMessage[]
+  faucetRequests    FaucetRequest[]
+
+  @@unique([chainId, name])
+}
+
+// ---------- Keypairs (non-custodial) ----------
+model Keypair {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label  String // "Dev_Node_01"
+  address String // public 0x address ONLY
+  // OPTIONAL, OPT-IN: opaque client-encrypted keystore the server cannot read.
+  encryptedKeystore Json? // Web3 Secret Storage JSON (AES-GCM ciphertext)
+  isEphemeral       Boolean  @default(true) // true = never persisted server-side
+  createdAt         DateTime @default(now())
+
+  @@unique([userId, address])
+  @@index([userId])
+}
+
+// ---------- Deployments ----------
+model Deployment {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  networkId       String
+  network         Network       @relation(fields: [networkId], references: [id])
+  standard        TokenStandard
+  name            String
+  symbol          String?
+  features        Json // { mintable, burnable, pausable, permit }
+  initialSupply   String? // wei/string for ERC20
+  baseUri         String? // ERC721/1155
+  txHash          String?
+  contractAddress String?
+  blockNumber     BigInt?
+  gasUsed         String?
+  status          TxStatus      @default(PENDING)
+  errorMessage    String?
+  createdAt       DateTime      @default(now())
+
+  @@index([userId])
+  @@index([networkId])
+  @@index([status])
+}
+
+enum TokenStandard {
+  ERC20
+  ERC721
+  ERC1155
+}
+
+// ---------- Transfers (native + assets) ----------
+model Transfer {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  networkId    String
+  network      Network      @relation(fields: [networkId], references: [id])
+  kind         TransferKind
+  fromAddress  String
+  toAddress    String
+  tokenAddress String? // null for native
+  tokenId      String? // ERC721/1155
+  amount       String? // wei / token units (string)
+  sponsored    Boolean      @default(false) // smart-wallet paymaster used
+  txHash       String?
+  status       TxStatus     @default(PENDING)
+  errorMessage String?
+  createdAt    DateTime     @default(now())
+
+  @@index([userId])
+  @@index([networkId])
+  @@index([status])
+}
+
+enum TransferKind {
+  NATIVE
+  ERC20
+  ERC721
+  ERC1155
+}
+
+// ---------- Bombard (throughput stress test) ----------
+model BombardRun {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id])
+  networkId    String
+  network      Network     @relation(fields: [networkId], references: [id])
+  mode         BombardMode @default(CLIENT_SIGNED)
+  targetTps    Int
+  totalCount   Int
+  sentCount    Int         @default(0)
+  successCount Int         @default(0)
+  failCount    Int         @default(0)
+  status       RunStatus   @default(QUEUED)
+  fromAddress  String?
+  toAddress    String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  events       BombardEvent[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum BombardMode {
+  CLIENT_SIGNED
+  RELAYER
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model BombardEvent {
+  id        String     @id @default(cuid())
+  runId     String
+  run       BombardRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  txHash    String?
+  nonce     Int?
+  status    TxStatus
+  latencyMs Int?
+  createdAt DateTime   @default(now())
+
+  @@index([runId])
+}
+
+// ---------- On-chain chat ----------
+model ChatMessage {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  networkId     String
+  network       Network  @relation(fields: [networkId], references: [id])
+  body          String // off-chain plaintext
+  contentHash   String // 0x keccak256(body[+attachment])
+  attachmentKey String? // file-store object key
+  senderAddress String
+  txHash        String? // hash commit tx
+  status        TxStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+
+  @@index([networkId])
+  @@index([userId])
+}
+
+// ---------- Faucet ----------
+model FaucetRequest {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  networkId String
+  network   Network  @relation(fields: [networkId], references: [id])
+  toAddress String
+  amount    String // wei
+  ip        String?
+  txHash    String?
+  status    TxStatus @default(PENDING)
+  createdAt DateTime @default(now())
+
+  @@index([toAddress])
+  @@index([networkId])
+  @@index([createdAt])
+}
+
+// ---------- Smart wallets ----------
+model SmartAccount {
+  id             String  @id @default(cuid())
+  userId         String
+  ownerAddress   String // EOA that controls the account
+  accountAddress String // deployed 4337 account
+  networkId      String
+  factory        String?
+  isDeployed     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@unique([networkId, accountAddress])
+  @@index([userId])
+}
+
+// ---------- Shared status + audit ----------
+enum TxStatus {
+  PENDING
+  BROADCAST
+  CONFIRMING
+  SUCCESS
+  FAILED
+  REJECTED
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String // "faucet.request", "deploy.erc20", ...
+  targetType String?
+  targetId   String?
+  metadata   Json? // NEVER secrets
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
