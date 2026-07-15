@@ -7,6 +7,11 @@ Read before any schema change (referenced by the auto-dev workflow).
 - Prisma 7 with the `prisma-client` generator and the `@prisma/adapter-pg`
   driver adapter. Datasource + explicit `.env` loading are configured in
   `prisma.config.ts` (Prisma 7 does **not** auto-load `.env`).
+- The generator emits an **ES module** client to `apps/web/lib/generated/prisma`
+  (consumed by `apps/web/lib/db.ts`). That output is **gitignored** and
+  regenerated with `pnpm db:generate` (CI runs it before typecheck/build).
+- The seed command is wired in `prisma.config.ts` (`tsx prisma/seed.ts`); run it
+  with `pnpm db:seed`.
 
 ## Local vs. production
 

@@ -65,7 +65,16 @@ export type Env = z.infer<typeof envSchema>;
  * every offending variable — never leaks the values themselves.
  */
 export function parseEnv(source: Record<string, string | undefined> = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  // Treat empty-string values as unset. `.env` files (and dotenv) surface blank
+  // keys like `DIRECT_DATABASE_URL=` as `''`, which would otherwise defeat
+  // `.optional()`/`.default()` and fail min-length checks. Normalizing here keeps
+  // an empty line equivalent to omitting the variable.
+  const normalized: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(source)) {
+    normalized[key] = value === '' ? undefined : value;
+  }
+
+  const parsed = envSchema.safeParse(normalized);
   if (!parsed.success) {
     const details = parsed.error.issues
       .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)

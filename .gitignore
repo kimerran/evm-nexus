@@ -9,6 +9,9 @@ out/
 build/
 *.tsbuildinfo
 
+# generated Prisma client (regenerated via `pnpm db:generate`; never committed)
+apps/web/lib/generated/
+
 # foundry
 packages/contracts/out/
 packages/contracts/cache/
