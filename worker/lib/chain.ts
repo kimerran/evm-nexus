@@ -67,3 +67,50 @@ export function buildFaucetClients(network: WorkerFaucetNetwork) {
   const walletClient = createWalletClient({ account, chain, transport: http(network.rpcUrl) });
   return { account, publicClient, walletClient };
 }
+
+/** Minimal network identity for a read-only watcher (no operator key needed). */
+export interface WorkerNetwork {
+  id: string;
+  chainId: number;
+  name: string;
+  rpcUrl: string;
+  nativeSymbol: string;
+  nativeDecimals: number;
+}
+
+/**
+ * Load a network's basic identity by id (for read-only watchers like
+ * deploy-watch, which never sign). Returns `null` when it does not exist.
+ */
+export async function loadNetworkBasic(networkId: string): Promise<WorkerNetwork | null> {
+  const network = await prisma.network.findUnique({ where: { id: networkId } });
+  if (!network) return null;
+  if (network.rpcUrl.startsWith('enc:')) {
+    // Credentialed RPC URLs are encrypted at rest by the web app; the worker in
+    // this scope targets a plaintext localhost RPC and does not decrypt.
+    throw new Error('Encrypted RPC URLs are not supported by the worker.');
+  }
+  return {
+    id: network.id,
+    chainId: network.chainId,
+    name: network.name,
+    rpcUrl: network.rpcUrl,
+    nativeSymbol: network.nativeSymbol,
+    nativeDecimals: network.nativeDecimals,
+  };
+}
+
+/** Build a read-only public client for a network (no signer). */
+export function buildPublicClientForNetwork(network: WorkerNetwork) {
+  const chain = defineChain({
+    id: network.chainId,
+    name: network.name,
+    nativeCurrency: {
+      name: network.nativeSymbol,
+      symbol: network.nativeSymbol,
+      decimals: network.nativeDecimals,
+    },
+    rpcUrls: { default: { http: [network.rpcUrl] } },
+  });
+  return createPublicClient({ chain, transport: http(network.rpcUrl) });
+}

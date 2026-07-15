@@ -3,6 +3,65 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Deployment flow: estimate → sign → broadcast (#12)
+
+Non-custodial token launches: the server builds the UNSIGNED deploy tx, the
+browser signs it with a vault keypair, and the server broadcasts ONLY the raw
+signed tx — the private key never leaves the client (AGENT §0/§5/§7, SPEC §8.5).
+
+- **Shared deploy lib** (`apps/web/lib/deployments/`): `artifacts.ts` encodes
+  constructor args against the COMMITTED template bytecode (#11) via viem
+  `encodeDeployData` (Solidity is never compiled at request time) — ERC-20
+  `(name,symbol,initialSupply,owner,flags)`, ERC-721 `(name,symbol,baseURI,owner,
+  flags)`, ERC-1155 `(baseURI,owner,flags)`. `schema.ts` is a zod discriminated
+  union on `standard` (checksummed `ownerAddress`, wei-string `initialSupply`,
+  per-standard feature flags, strict keys). `draft.ts` mints an opaque HMAC-signed
+  DRAFT token (keyed by `SESSION_SECRET`, 15-min expiry) pinning userId / network /
+  chainId / the exact creation `data` / owner / ceiling snapshot — no DB row, no
+  secrets. `verify.ts` parses the signed tx (`parseTransaction` +
+  `recoverTransactionAddress`) and enforces the chain-safety invariants.
+  `ceilings.ts` reads `deploy.*` AppSettings (kill-switch + gas/value/fee caps) with
+  safe defaults. `dto.ts`/`context.ts` round out serialization + active-network
+  resolution.
+- **API** (`app/api/deployments/…`): `POST /estimate` (`requireAuth` + CSRF, zod,
+  deploy rate-limit) encodes ctor args, estimates gas (+20% buffer) + reads
+  congestion, verifies the live chainId, and returns `{ estimatedGas, baseFee,
+  congestion, unsignedTx, deploymentDraftId }`. `POST /broadcast` decodes+verifies
+  the draft (HMAC/expiry/owner), re-confirms the active network + live chainId, then
+  asserts the SIGNED tx is a contract creation whose chainId matches, whose calldata
+  equals the pinned data, and whose gas/value/fee stay within ceilings — BEFORE
+  `sendRawTransaction` — then persists a `Deployment` (PENDING), enqueues
+  `deploy-watch`, and audits (ids/addresses/hashes only). `GET /` (filter by
+  standard/status/network, owner-scoped) + `GET /:id` (detail, foreign id → 404).
+- **`deploy-watch` worker** (`worker/deploy/process-watch.ts`): read-only (never
+  signs) — polls `waitForTransactionReceipt` with per-attempt window + BullMQ
+  backoff; on receipt records `contractAddress`/`gasUsed`/`blockNumber` + SUCCESS or
+  FAILED (revert); on the final attempt marks FAILED (timeout). Idempotent by id.
+  Registered alongside `faucet-drip` in the worker entrypoint.
+- **`/launchpad`** (`app/(app)/launchpad`): RSC shell + client manager with
+  ERC-20/721/1155 tabs, per-standard inputs, feature toggles, a gas/congestion
+  estimate, a deployment-progress terminal, and a recent-deployments table. The
+  selected keypair is decrypted + used to sign IN-BROWSER (`lib/crypto` +
+  `lib/deployments/sign-client.ts`); only the raw signed tx is posted to
+  `/broadcast`.
+- **Build fix**: the `@nexus/types` contract barrels re-exported with `.js`
+  specifiers, which Turbopack failed to resolve to the `.ts` sources on first
+  app-route import — switched to extensionless relative specifiers (safe under
+  `moduleResolution: Bundler`; the generator emits the same).
+- **Tests** (Vitest, 15 new): ctor-arg encode→`decodeDeployData` round-trip for all
+  three standards + flags-on≠flags-off; draft sign/verify + tamper/expiry/malformed;
+  and `parseSignedDeploy`+`assertDeployWithinPolicy` over REAL signed txs — chainId
+  mismatch, gas ceiling, value ceiling, data mismatch, wrong signer, kill-switch.
+- **Live-verified on anvil (chainId 31337)** via a scripted client standing in for
+  the browser vault (anvil key #1): ERC-20 `0x8464135c…318bC`, ERC-721
+  `0x948B3c65…34F8F`, ERC-1155 `0xbCF26943…761508` all estimate→sign→broadcast→
+  `deploy-watch` SUCCESS with real `contractAddress`/`gasUsed`/`blockNumber`.
+  Feature assertions: ERC-20 pausable honored (paused false→true) + mintable OFF
+  reverts `mint`; ERC-721 mintable honored (`ownerOf(0)`==owner); ERC-1155 supply
+  honored (`totalSupply(7)` 0→100). Chain-safety: chainId 1 → 400 rejected; gas
+  20M > 15M ceiling → 400 rejected. Logs carry only ids/statuses/addresses/tx
+  hashes — no key, no raw signed tx.
+
 ## 2026-07-15 — Token contract templates ERC-20/721/1155 (#11)
 
 Foundry token templates on OpenZeppelin 5.x (v5.6.1), Solidity 0.8.28, with
