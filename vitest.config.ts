@@ -17,6 +17,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['{apps,packages,worker}/**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/out/**', 'e2e/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      '**/out/**',
+      'e2e/**',
+      // Foundry submodule sources (OpenZeppelin, account-abstraction) ship their
+      // own Hardhat/JS test files — never our Vitest suites.
+      'packages/contracts/lib/**',
+    ],
   },
 });

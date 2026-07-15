@@ -119,6 +119,13 @@ async function seedAppSettings(prisma: PrismaClient): Promise<void> {
     'chat.maxGas': '200000',
     'chat.maxFeePerGasWei': '1000000000000',
     'chat.relayerDailyCap': 200,
+    // Smart-wallet (ERC-4337) sponsorship budget caps + kill-switch (SPEC §8.9,
+    // AGENT.md §5). `maxOpCostWei` bounds a single sponsored UserOp's max gas
+    // cost; `dailyCapWei` is the rolling per-day paymaster spend ceiling. Wei
+    // stay strings to avoid precision loss.
+    'userop.sponsorEnabled': true,
+    'userop.maxOpCostWei': '100000000000000000', // 0.1 ETH per op
+    'userop.dailyCapWei': '5000000000000000000', // 5 ETH/day paymaster budget
   };
 
   for (const [key, value] of Object.entries(baseline)) {

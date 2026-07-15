@@ -3,6 +3,55 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Smart wallets & sponsored tx (ERC-4337) (#16)
+
+Gasless transactions via ERC-4337 v0.7 smart accounts: a user creates a
+counterfactual smart account owned by their in-app keypair, and sends a
+**sponsored** UserOp where a VerifyingPaymaster pays the gas and the owner EOA
+pays **zero**. All signing stays IN-BROWSER (AGENT §0) — the owner signs only the
+`userOpHash`; the server never sees the key. The two operator keys stay
+**worker-only**: the paymaster signer never enters the web process (the `/sponsor`
+route round-trips through a worker to sign), and the relayer submits `handleOps`.
+
+- **4337 contracts** (`packages/contracts`): the eth-infinitism reference stack is
+  vendored as a submodule (`forge install eth-infinitism/account-abstraction@v0.7.0`)
+  and compiled unchanged via a `src/aa/AA4337.sol` anchor — `EntryPoint`,
+  `SimpleAccountFactory`, `SimpleAccount`, `VerifyingPaymaster`. `forge test`
+  (`test/AA4337.t.sol`) proves counterfactual-address == deployed, a sponsored
+  `handleOps` that deploys + runs an inner call with the owner paying zero, and
+  wrong-paymaster-signer rejection. Artifacts are exported (`export-artifacts.mjs`
+  extended) to `packages/contracts/artifacts/` and mirrored into `@nexus/types`.
+- **Setup path** (`apps/web/scripts/deploy-4337.ts`): deploys the stack on anvil
+  (no canonical EntryPoint there), funds the paymaster's EntryPoint deposit +
+  stake, and records the public addresses in `AppSetting`
+  (`smartwallet.stack.<networkId>`) — no migration. A live proof
+  (`apps/web/scripts/prove-4337.ts`) drives the real routes + worker end-to-end.
+- **Smart-wallet lib** (`apps/web/lib/smart-wallets/`): PURE UserOp math
+  (`userop.ts` — pack/hash via viem `account-abstraction`, `execute`/`createAccount`
+  calldata, `paymasterAndData` layout), budget caps (`budget.ts` — pure decision +
+  Redis reservation, fails closed), stack resolver, deploy draft (HMAC-pinned),
+  DTO with on-read `isDeployed` reconciliation, and a browser-only `sign-client.ts`
+  that signs the `userOpHash`.
+- **Endpoints**: `GET /api/smart-accounts`, `POST /api/smart-accounts/predict`,
+  `POST /api/smart-accounts/deploy` (+ `/deploy/broadcast`, client-signed factory
+  call), `POST /api/userops/sponsor` (scaffolds the UserOp, enforces the
+  rate-limit + **budget cap**, round-trips to the worker to sign the paymaster
+  data, returns the sponsored UserOp + `userOpHash`), and `POST /api/userops/send`
+  (independently re-verifies the owner signature, records `Transfer.sponsored=true`,
+  enqueues the bundler).
+- **Workers** (`worker/userops/`): `userop-sponsor` signs `paymasterAndData` with
+  the PAYMASTER_SIGNER key (computes the hash via the paymaster's own on-chain
+  `getHash`); `userop-bundler` submits `handleOps` with the RELAYER key, decodes
+  the `UserOperationEvent`, finalizes the Transfer, flips `SmartAccount.isDeployed`,
+  and re-enforces the per-op budget cap.
+- **UI**: a `/smart-wallets` page (predict/deploy/list + sponsored send) and the
+  transfers/Lab **sponsored toggle** completed (the Sprint-8 stub now runs a real
+  sponsored native send through the keypair's smart account).
+- **Security invariants**: paymaster + relayer keys are worker-only (grep-clean of
+  web logs/source); sponsorship is rate-limited and budget-capped (per-op
+  `userop.maxOpCostWei` + rolling daily `userop.dailyCapWei`, reserved atomically
+  in Redis); the send route re-verifies the owner signature and pins the paymaster.
+
 ## 2026-07-15 — On-chain chat + file storage (#15)
 
 Tamper-evident on-chain chat: messages live off-chain, a keccak256 hash of each

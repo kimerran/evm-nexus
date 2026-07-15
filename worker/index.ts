@@ -14,11 +14,19 @@ import { DEPLOY_WATCH_QUEUE, type DeployWatchJobData } from '../apps/web/lib/dep
 import { TX_WATCH_QUEUE, type TxWatchJobData } from '../apps/web/lib/transfers/keys';
 import { BOMBARD_RUNNER_QUEUE, type BombardRunnerJobData } from '../apps/web/lib/bombard/keys';
 import { CHAT_COMMIT_QUEUE, type ChatCommitJobData } from '../apps/web/lib/chat/keys';
+import {
+  USEROP_SPONSOR_QUEUE,
+  USEROP_BUNDLER_QUEUE,
+  type UserOpSponsorJobData,
+  type UserOpBundlerJobData,
+} from '../apps/web/lib/smart-wallets/keys';
 import { processFaucetDrip } from './faucet/process-drip';
 import { processDeployWatch } from './deploy/process-watch';
 import { processTxWatch, processChatCommitWatch } from './tx/process-watch';
 import { processChatCommit } from './chat/process-commit';
 import { processBombardRun } from './bombard/process-run';
+import { processUserOpSponsor } from './userops/process-sponsor';
+import { processUserOpBundle } from './userops/process-bundle';
 
 function log(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
@@ -39,6 +47,8 @@ function main(): void {
       TX_WATCH_QUEUE,
       BOMBARD_RUNNER_QUEUE,
       CHAT_COMMIT_QUEUE,
+      USEROP_SPONSOR_QUEUE,
+      USEROP_BUNDLER_QUEUE,
     ],
     nodeEnv: env.NODE_ENV,
   });
@@ -181,6 +191,54 @@ function main(): void {
     log('worker.error', { queue: BOMBARD_RUNNER_QUEUE, error: err.message });
   });
 
+  // userop-sponsor: signs paymasterAndData with the PAYMASTER_SIGNER key (the ONLY
+  // process that loads it). The /sponsor route awaits this job's return value.
+  const sponsorWorker = new Worker<UserOpSponsorJobData>(
+    USEROP_SPONSOR_QUEUE,
+    async (job) => {
+      const result = await processUserOpSponsor(job.data);
+      log('userop.sponsor.processed', {
+        networkId: job.data.networkId,
+        sender: job.data.userOp.sender,
+        validUntil: result.validUntil,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 4 },
+  );
+
+  sponsorWorker.on('failed', (job, err) => {
+    log('userop.sponsor.failed', { sender: job?.data.userOp.sender ?? null, error: err.message });
+  });
+  sponsorWorker.on('error', (err) => {
+    log('worker.error', { queue: USEROP_SPONSOR_QUEUE, error: err.message });
+  });
+
+  // userop-bundler: submits handleOps with the RELAYER key, polls, finalizes.
+  const bundlerWorker = new Worker<UserOpBundlerJobData>(
+    USEROP_BUNDLER_QUEUE,
+    async (job) => {
+      const result = await processUserOpBundle(job.data);
+      log('userop.bundle.processed', {
+        transferId: result.transferId,
+        status: result.status,
+        txHash: result.txHash ?? null,
+        userOpSuccess: result.userOpSuccess ?? null,
+        actualGasCost: result.actualGasCost ?? null,
+        note: result.note ?? null,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 2 },
+  );
+
+  bundlerWorker.on('failed', (job, err) => {
+    log('userop.bundle.failed', { transferId: job?.data.transferId ?? null, error: err.message });
+  });
+  bundlerWorker.on('error', (err) => {
+    log('worker.error', { queue: USEROP_BUNDLER_QUEUE, error: err.message });
+  });
+
   const shutdown = (signal: string): void => {
     log('worker.shutdown', { signal });
     void Promise.all([
@@ -189,6 +247,8 @@ function main(): void {
       txWorker.close(),
       bombardWorker.close(),
       chatCommitWorker.close(),
+      sponsorWorker.close(),
+      bundlerWorker.close(),
     ]).then(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

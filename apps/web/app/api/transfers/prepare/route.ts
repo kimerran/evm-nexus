@@ -49,12 +49,16 @@ export async function POST(req: NextRequest) {
     const ceilings = await loadTransferCeilings();
     if (!ceilings.enabled) throw new ValidationError('Transfers are currently disabled.');
 
-    // Sponsored branch: wired, but the paymaster/UserOp path lands in Sprint 8.
+    // Sponsored branch: the paymaster/UserOp path now lives at /api/userops/*
+    // (#16). The client sends a sponsored NATIVE transfer through the keypair's
+    // smart account there — never as a client-signed EOA tx here. This guard keeps
+    // /prepare from silently downgrading a sponsored request to an unsponsored EOA
+    // send; the UI branches to the sponsored flow before ever calling /prepare.
     if (request.sponsored) {
       return jsonOk({
         mode: 'sponsored-unavailable' as const,
-        sprint: 8,
-        message: 'Sponsored (paymaster) transfers are not yet available — coming in Sprint 8.',
+        sprint: 16,
+        message: 'Sponsored transfers use the smart-account flow — see /api/userops/sponsor.',
       });
     }
 

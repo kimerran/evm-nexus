@@ -16,6 +16,9 @@ export default [
       '**/generated/**',
       // Auto-generated contract ABIs + bytecode (from the Foundry build).
       'packages/types/src/contracts/**',
+      // Foundry submodule sources (OpenZeppelin, account-abstraction) ship their
+      // own JS/TS Hardhat tests — never our code to lint.
+      'packages/contracts/lib/**',
       '**/*.d.ts',
     ],
   },
