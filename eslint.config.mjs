@@ -14,6 +14,8 @@ export default [
       '**/playwright-report/**',
       '**/test-results/**',
       '**/generated/**',
+      // Auto-generated contract ABIs + bytecode (from the Foundry build).
+      'packages/types/src/contracts/**',
       '**/*.d.ts',
     ],
   },

@@ -6,4 +6,5 @@ out/
 cache/
 coverage/
 packages/contracts/out/
+packages/types/src/contracts/
 apps/web/lib/generated/
