@@ -39,6 +39,42 @@ live SSE stream, and a dependency-aware readiness probe.
 - 42 new Vitest cases (block-time derivation, hex/txpool parsing + graceful missing-method
   handling, readiness aggregation/timeout, SSE framing, formatters). All gates green.
 
+## 2026-07-15 — Non-custodial keypair vault (#9)
+
+Browser-only key generation, encryption, and management. The server never
+receives, stores, or logs a plaintext private key — it may only hold the opaque
+encrypted keystore blob a user opts to persist (AGENT §0/§6, SPEC §4.1/§8.3).
+
+- **Client keystore crypto** (`apps/web/lib/crypto/keystore.ts`, `"use client"`,
+  browser-only, no `process.env`/server import): `generateKeypair()` (viem
+  `generatePrivateKey` → `privateKeyToAccount`), `encryptKeystore(pk, passphrase)`
+  and `decryptKeystore(blob, passphrase)`. KDF/cipher: **PBKDF2-SHA-512 @ 600k
+  iterations** (WebCrypto-native, no WASM dep) → **AES-256-GCM**, per-key random
+  32-byte salt + 96-bit IV, output as a **Web3-Secret-Storage-v3**-shaped JSON
+  envelope carrying only ciphertext + public KDF params + a keccak256 mac. Wrong
+  passphrase / tampered blob fail cleanly as a typed `KeystoreError` (mac pre-check
+  before the AES step, plus GCM's own auth tag). `keystore-schema.ts` is the shared
+  zod envelope; a payload missing `crypto.ciphertext` is rejected.
+- **In-memory vault** (`lib/crypto/vault.ts`, `"use client"`): decrypted keys live
+  only in module memory and are wiped on `beforeunload`/`unload`/`pagehide` — never
+  localStorage, disk, or network.
+- **API** (`app/api/keypairs/…`): `GET /` + `POST /` + `DELETE /:id` +
+  `POST /validate-address` (all `requireAuth` + CSRF on the cookie path). POST stores
+  ONLY `{ label, address, encryptedKeystore }`; it **rejects any private-key-ish
+  payload** (`privateKey`/`pk`/`mnemonic`/`seed`/…) with 400 via a recursive denylist
+  scan (`assertNoPrivateKeyMaterial`, any depth) **plus** a strict zod schema that
+  requires a real v3 ciphertext envelope. Audit records label + address only; the DTO
+  exposes no plaintext-key field.
+- **UI** (`app/(app)/keypairs`, `components/keypairs/keypair-table.tsx`): generate,
+  import/export encrypted keystore JSON, label, ephemeral↔persisted toggle, copy, and
+  delete — using `components/ui` primitives and the reusable presentational
+  `KeypairTable` (holds no secret state, performs no crypto).
+- Unit tests (Vitest, Node WebCrypto): encrypted blob never contains the plaintext key;
+  encrypt→decrypt round-trips to the same address/key; wrong passphrase + tamper fail
+  cleanly. Live-verified: `privateKey`/`seed`/`mnemonic` → 400, valid blob → 201, GET
+  returns the blob with no plaintext, CSRF-less → 403, unauth → 401, DELETE → 200; DB row
+  holds only ciphertext and the server log shows zero plaintext key.
+
 ## 2026-07-15 — Network config & viem client resolver (#7)
 
 Admin-managed, RPC-secret-safe network configuration plus the single viem client
