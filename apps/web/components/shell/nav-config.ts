@@ -26,6 +26,7 @@ export const secondaryNav: NavEntry[] = [
   { label: 'API Keys', href: '/settings/api-keys', icon: 'vpn_key' },
   { label: 'Network Settings', href: '/settings/networks', icon: 'dns', role: 'ADMIN' },
   { label: 'Users', href: '/settings/users', icon: 'group', role: 'ADMIN' },
+  { label: 'Audit Log', href: '/settings/audit', icon: 'receipt_long', role: 'ADMIN' },
   { label: 'Support', href: '/settings/profile', icon: 'help' },
 ];
 
