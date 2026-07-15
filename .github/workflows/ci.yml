@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm run db:generate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Contract tests
+        run: pnpm contracts:test
+
+      - name: Build
+        run: pnpm build
+        env:
+          APP_URL: http://localhost:3000
+          SESSION_SECRET: ci-session-secret-ci-session-secret-32
+          ENCRYPTION_KEY: ci-encryption-key-ci-encryption-key-32
+          CSRF_SECRET: ci-csrf-secret-ci-csrf
+          DATABASE_URL: postgresql://nexus:nexus@localhost:5432/evm_nexus?schema=public
+          REDIS_URL: redis://localhost:6379
+
+      - name: Audit
+        # Fails on real high/critical advisories. npm retired the legacy audit
+        # endpoint pnpm posts to (HTTP 410); that infra error is downgraded to a
+        # warning so it doesn't mask a green build, while true advisories still fail.
+        run: |
+          set +e
+          out=$(pnpm audit --audit-level=high 2>&1)
+          code=$?
+          echo "$out"
+          if [ $code -ne 0 ] && echo "$out" | grep -qE "endpoint is being retired|ERR_PNPM_AUDIT_BAD_RESPONSE"; then
+            echo "::warning::pnpm audit endpoint unavailable (legacy npm audit endpoint retired); audit gate skipped."
+            exit 0
+          fi
+          exit $code

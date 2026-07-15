@@ -1,0 +1,18 @@
+@import 'tailwindcss';
+
+/* Minimal dark baseline for Sprint 0. The full BRAND.md token set (colors,
+   radii, spacing, font families, type scale) is ported into this @theme block
+   in the "Design system & app shell" issue. */
+@theme {
+  --color-bg: #0a0e14;
+  --color-surface: #111823;
+  --color-fg: #e6edf3;
+  --color-muted: #8b98a9;
+  --color-accent: #4fd1c5;
+}
+
+html,
+body {
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+}
