@@ -3,6 +3,37 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+
+## 2026-07-15 — Network config & viem client resolver (#7)
+
+Admin-managed, RPC-secret-safe network configuration plus the single viem client
+path every future on-chain read/write flows through.
+
+- **Network resolver** (`apps/web/lib/chain/resolver.ts`): pure builders
+  `toViemChain` / `buildPublicClient` / `buildWalletClient` turn a `NetworkClientConfig`
+  into viem clients (`http()` default, `webSocket()` when `preferWebSocket` + `wsUrl`),
+  and DB-bound `getActiveNetworkConfig` / `getPublicClient` / `getWalletClient` read the
+  active (`isDefault`) `Network`, decrypting its RPC URL. Adds `viem@2.55.2`. Verified
+  live against anvil: chainId 31337, latest block read (advanced 0→5 after mining).
+- **RPC secret handling** (`apps/web/lib/chain/rpc-url.ts`): a URL carrying userinfo is
+  AES-256-GCM encrypted at rest (`enc:v1.…` via `lib/crypto/at-rest`) and stored verbatim
+  otherwise. Client responses never receive the stored value — only a redacted origin
+  (`protocol//host`, dropping userinfo/path/query) plus a `rpcUrlHasSecret` flag
+  (`network-dto.ts`). Proven: DB column shows `enc:v1.…` with no plaintext key.
+- **API** (`app/api/networks/…`): `GET /` + `GET /:id` (any auth, secrets redacted),
+  `POST /` + `PATCH /:id` + `DELETE /:id` + `POST /:id/default` (all `requireRole('ADMIN')`
+  + CSRF + zod), and `GET /:id/health` (live `eth_*` metrics via the resolver). zod
+  checksum-normalizes addresses (viem `getAddress`), validates chainId + http(s)/ws(s)
+  schemes, rejects unknown keys, and keeps wei amounts as integer strings (AGENT §4).
+  Single-active-default is enforced atomically; the delete guard (`network-service.ts`)
+  blocks removing the default or a referenced network (→409). `TODO(#6)` markers left
+  where audit-log writes will attach.
+- **Admin UI** (`app/(app)/settings/networks`): ADMIN-gated CRUD table + form (RPC/WS/
+  explorer URLs, native symbol/decimals, faucet drip/cap/cooldown, paymaster + entrypoint,
+  isDefault, isArchival), set-active + delete actions, echoing the `nexus_csrf` token.
+- Live-verified: admin create/patch/set-default, USER write → 403, CSRF-less write → 403,
+  GET redaction, delete guard, and the resolver reading anvil's head. 22 new Vitest cases.
+
 ## 2026-07-15 — User & API-key management + audit log (#6)
 
 Settings surfaces + endpoints for user administration, personal API keys, and the
