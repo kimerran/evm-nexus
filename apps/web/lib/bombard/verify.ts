@@ -46,6 +46,14 @@ async function assertMatchesPlan(rawTx: string, index: number, plan: BombardPlan
   if ((tx.gas ?? 0n) > BigInt(plan.gas)) {
     throw new ValidationError(`Signed tx #${index} gas exceeds the plan ceiling.`);
   }
+  // SPEC §13: gas/value/maxFee ceilings enforced before EVERY broadcast. The plan
+  // pins the ceiling-checked maxFeePerGasWei (prepare re-checks it against the
+  // AppSetting ceiling); the client's actual signed fee must not exceed it, or a
+  // client could ship a bombard batch with an arbitrary maxFeePerGas unchecked.
+  const maxFeePerGas = tx.maxFeePerGas ?? tx.gasPrice ?? 0n;
+  if (maxFeePerGas > BigInt(plan.maxFeePerGasWei)) {
+    throw new ValidationError(`Signed tx #${index} maxFeePerGas exceeds the plan ceiling.`);
+  }
 
   type RecoverArg = Parameters<typeof recoverTransactionAddress>[0]['serializedTransaction'];
   const signer = await recoverTransactionAddress({

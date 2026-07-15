@@ -5,13 +5,14 @@
 // is re-checked here in every handler (proxy.ts is defense-in-depth only).
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { jsonOk, toErrorResponse } from '@/lib/http';
+import { getClientIp, jsonOk, toErrorResponse } from '@/lib/http';
 import { requireAuth, requireRole } from '@/lib/auth/require-role';
 import { requireCsrf } from '@/lib/auth/csrf';
 import { ValidationError } from '@/lib/errors';
 import { createNetworkSchema } from '@/lib/chain/network-schema';
 import { createNetwork } from '@/lib/chain/network-service';
 import { toNetworkDto } from '@/lib/chain/network-dto';
+import { writeAudit } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/networks — create a network (ADMIN + CSRF). */
 export async function POST(req: NextRequest) {
   try {
-    await requireRole('ADMIN', req);
+    const principal = await requireRole('ADMIN', req);
     requireCsrf(req);
 
     const body: unknown = await req.json().catch(() => null);
@@ -40,8 +41,16 @@ export async function POST(req: NextRequest) {
       throw new ValidationError(parsed.error.issues[0]?.message ?? 'Invalid request body.');
     }
 
-    // TODO(#6): auditLog.write('network.create', { targetType: 'Network', targetId: created.id }).
     const created = await createNetwork(parsed.data);
+    // SPEC §13: audit every privileged action. Non-secret metadata only — the RPC
+    // credential is never included (it is stored encrypted at rest).
+    await writeAudit({
+      actorId: principal.user.id,
+      action: 'network.create',
+      target: { type: 'Network', id: created.id },
+      metadata: { name: created.name, chainId: created.chainId },
+      ip: getClientIp(req),
+    });
     return jsonOk({ network: toNetworkDto(created) }, { status: 201 });
   } catch (err) {
     return toErrorResponse(err);

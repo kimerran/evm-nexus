@@ -106,7 +106,16 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ key: string
     if (buf.length === 0) throw new ValidationError('Empty upload.');
     if (buf.length > MAX_UPLOAD_BYTES) throw new ValidationError('File exceeds the size limit.');
 
-    await getStorage().putObject(key, new Uint8Array(buf), declaredMime);
+    // SPEC §13: uploads must pass MIME + magic-byte + size validation. Sniff the
+    // actual bytes at the WRITE boundary so mismatched/forged content is rejected
+    // before it is ever persisted (defense-in-depth with the serve-time check).
+    const bytes = new Uint8Array(buf);
+    const validation = validateUploadedBytes(bytes, declaredMime);
+    if (!validation.ok) {
+      return jsonError(415, 'UNSUPPORTED_MEDIA', validation.message);
+    }
+
+    await getStorage().putObject(key, bytes, declaredMime);
     return NextResponse.json({ data: { key, size: buf.length } }, { status: 201 });
   } catch (err) {
     return toErrorResponse(err);

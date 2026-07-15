@@ -18,6 +18,7 @@ import {
   setSessionCookie,
 } from '@/lib/auth/session';
 import { requireCsrf } from '@/lib/auth/csrf';
+import { writeAudit } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,7 +74,16 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
     ip: getClientIp(req),
   });
-  await revokeOtherSessions(user.id, rotated.sid);
+  const otherRevoked = await revokeOtherSessions(user.id, rotated.sid);
+
+  // SPEC §13: audit privileged credential changes. No password material recorded.
+  await writeAudit({
+    actorId: user.id,
+    action: 'auth.password_change',
+    target: { type: 'User', id: user.id },
+    metadata: { otherSessionsRevoked: otherRevoked },
+    ip: getClientIp(req),
+  });
 
   // 204: no body, but carry the rotated session cookie.
   const res = new NextResponse(null, { status: 204 });

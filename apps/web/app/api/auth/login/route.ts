@@ -17,6 +17,7 @@ import {
   registerFailedLogin,
 } from '@/lib/auth/rate-limit';
 import { generateCsrfToken, setCsrfCookie } from '@/lib/auth/csrf';
+import { writeAudit } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +64,14 @@ export async function POST(req: NextRequest) {
 
   if (!user || !user.isActive || !passwordOk) {
     await registerFailedLogin(ip, username);
+    // SPEC §13: audit privileged auth events. The attempted username is non-secret
+    // context; the password is NEVER recorded. actorId is null for an unknown user.
+    await writeAudit({
+      actorId: user?.id ?? null,
+      action: 'auth.login.failed',
+      metadata: { username },
+      ip,
+    });
     return invalidCredentials();
   }
 
@@ -73,6 +82,14 @@ export async function POST(req: NextRequest) {
 
   // Successful auth resets this user's failure counter.
   await clearUsernameFailures(username);
+
+  // SPEC §13: audit privileged auth events (no secrets in metadata).
+  await writeAudit({
+    actorId: user.id,
+    action: 'auth.login',
+    target: { type: 'User', id: user.id },
+    ip,
+  });
 
   const res = jsonOk({ user: { id: user.id, username: user.username, role: user.role } });
   setSessionCookie(res, token, expiresAt);
