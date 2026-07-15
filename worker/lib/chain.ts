@@ -4,10 +4,12 @@
 // This is the only place the faucet key is turned into a signer. Clients target
 // exactly the network's RPC; the processor verifies the live chainId equals the
 // configured one BEFORE any broadcast. Amounts are bigint/wei.
-import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, getAddress, isAddress } from 'viem';
+import type { Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { prisma } from './prisma';
-import { getFaucetPrivateKey, getRelayerPrivateKey } from './config';
+import { getFaucetPrivateKey, getRelayerPrivateKey, getPaymasterSignerPrivateKey } from './config';
+import { stackSettingKey } from '../../apps/web/lib/smart-wallets/keys';
 
 /** Decoded faucet network config for the worker (wei as bigint). */
 export interface WorkerFaucetNetwork {
@@ -116,6 +118,42 @@ function toBasicChain(network: WorkerNetwork) {
 /** Build a read-only public client for a network (no signer). */
 export function buildPublicClientForNetwork(network: WorkerNetwork) {
   return createPublicClient({ chain: toBasicChain(network), transport: http(network.rpcUrl) });
+}
+
+/** The deployed ERC-4337 stack addresses for a network (all public). */
+export interface WorkerStack {
+  entryPoint: Address;
+  factory: Address;
+  paymaster: Address;
+  paymasterSigner: Address;
+}
+
+/**
+ * Load the ERC-4337 stack addresses for a network from AppSetting (written by
+ * scripts/deploy-4337.ts). Returns `null` when the stack has not been deployed.
+ * These are PUBLIC addresses — never keys.
+ */
+export async function loadStack(networkId: string): Promise<WorkerStack | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: stackSettingKey(networkId) } });
+  if (!row || typeof row.value !== 'object' || row.value === null) return null;
+  const v = row.value as Record<string, unknown>;
+  const fields = [v.entryPoint, v.factory, v.paymaster, v.paymasterSigner];
+  if (!fields.every((f) => typeof f === 'string' && isAddress(f))) return null;
+  return {
+    entryPoint: getAddress(v.entryPoint as string),
+    factory: getAddress(v.factory as string),
+    paymaster: getAddress(v.paymaster as string),
+    paymasterSigner: getAddress(v.paymasterSigner as string),
+  };
+}
+
+/**
+ * The paymaster verifying-signer account (worker-only key). Used ONLY by the
+ * `userop-sponsor` processor to sign `paymasterAndData`. Loaded here and never in
+ * the web app (prime directive, AGENT.md §5).
+ */
+export function buildPaymasterSignerAccount() {
+  return privateKeyToAccount(getPaymasterSignerPrivateKey());
 }
 
 /**

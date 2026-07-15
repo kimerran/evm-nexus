@@ -1,14 +1,18 @@
 'use client';
 
-// Reusable new-transfer form (SPEC §7/§8.6). Used by BOTH the /transfers page and
-// the /lab Transfer Assets panel. Tabs for native / ERC-20 / ERC-721 / ERC-1155,
-// a sponsored toggle (Sprint-8 stub), keypair select + passphrase, and a live
+// Reusable new-transfer form (SPEC §7/§8.6/§8.9). Used by BOTH the /transfers page
+// and the /lab Transfer Assets panel. Tabs for native / ERC-20 / ERC-721 /
+// ERC-1155, a sponsored (gasless) toggle, keypair select + passphrase, and a live
 // progress terminal.
 //
 // PRIME DIRECTIVE (AGENT.md §0): the selected keypair is decrypted and used to
-// sign the transfer tx ONLY in this browser (lib/crypto + lib/transfers/sign-
-// client). The server receives ONLY the raw SIGNED tx via /broadcast — never the
-// private key. Amounts are handled as bigint/wei via viem (never floats).
+// sign ONLY in this browser (lib/crypto + lib/transfers/sign-client). The server
+// receives ONLY the raw SIGNED tx via /broadcast — never the private key.
+//
+// SPONSORED path (#16): toggling "Sponsored" sends a NATIVE transfer through the
+// keypair's ERC-4337 smart account. The keypair is the account OWNER: it signs the
+// userOpHash in-browser (never the key), the VerifyingPaymaster pays gas, and the
+// bundler submits it. Amounts are handled as bigint/wei via viem (never floats).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseEther, isAddress } from 'viem';
 import type { Hex } from 'viem';
@@ -25,6 +29,7 @@ import {
 import { csrfFetch } from '@/lib/csrf-client';
 import { decryptKeystore, KeystoreError } from '@/lib/crypto/keystore';
 import { signTransferTx, type UnsignedTransferTx } from '@/lib/transfers/sign-client';
+import { signUserOpHash } from '@/lib/smart-wallets/sign-client';
 import type { KeypairDto } from '@/lib/keypairs/dto';
 
 export type TransferKind = 'NATIVE' | 'ERC20' | 'ERC721' | 'ERC1155';
@@ -156,6 +161,29 @@ export function TransferForm({
     const body = buildPrepareBody();
     if (!body) return;
 
+    // Sponsored (gasless) path: route a NATIVE send through the keypair's smart
+    // account. Other kinds fall back to the client-signed path with a note.
+    if (sponsored) {
+      if (kind !== 'NATIVE') {
+        toast({
+          message: 'Sponsored sends currently support native coins. Use Smart Wallets for tokens.',
+          tone: 'info',
+          icon: 'info',
+        });
+        return;
+      }
+      setBusy(true);
+      try {
+        await sendSponsoredNative(selected.encryptedKeystore);
+      } catch {
+        toast({ message: 'Something went wrong.', tone: 'error', icon: 'error' });
+        pushLog('ERROR', 'Unexpected error during sponsored send.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       pushLog('SYSTEM', `Preparing ${kind} transfer…`);
@@ -214,6 +242,68 @@ export function TransferForm({
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Sponsored NATIVE send via the keypair's ERC-4337 smart account. The keypair is
+   * the account OWNER: it signs the userOpHash in-browser (never the key); the
+   * paymaster pays gas; the bundler submits `handleOps`. The smart account (not the
+   * owner EOA) must hold the native funds being sent.
+   */
+  async function sendSponsoredNative(
+    keystore: NonNullable<KeypairDto['encryptedKeystore']>,
+  ): Promise<void> {
+    pushLog('SYSTEM', 'Requesting paymaster sponsorship…');
+    const sponsorRes = await csrfFetch('/api/userops/sponsor', {
+      method: 'POST',
+      body: JSON.stringify({
+        networkId,
+        ownerAddress: from,
+        call: { to, value: parseEther(amount || '0').toString(), data: '0x' },
+      }),
+    });
+    if (!sponsorRes.ok) {
+      toast({ message: await readError(sponsorRes, 'Sponsor failed.'), tone: 'error', icon: 'error' });
+      pushLog('ERROR', 'Sponsorship rejected.');
+      return;
+    }
+    const sponsor = (
+      (await sponsorRes.json()) as {
+        data: { sender: string; userOp: Record<string, unknown>; userOpHash: Hex };
+      }
+    ).data;
+    pushLog('SYSTEM', `Smart account ${sponsor.sender.slice(0, 10)}… — paymaster signed.`);
+
+    pushLog('SYSTEM', 'Unlocking owner keypair in-browser…');
+    let privateKey: Hex;
+    try {
+      privateKey = (await decryptKeystore(keystore, passphrase)).privateKey;
+    } catch (err) {
+      const message =
+        err instanceof KeystoreError ? 'Incorrect passphrase.' : 'Could not unlock keypair.';
+      toast({ message, tone: 'error', icon: 'lock' });
+      return;
+    }
+
+    pushLog('SYSTEM', 'Signing userOpHash in-browser…');
+    const signature = await signUserOpHash(sponsor.userOpHash, privateKey);
+    privateKey = '0x' as Hex; // drop the key reference immediately after signing
+
+    pushLog('SYSTEM', 'Submitting sponsored UserOp to the bundler…');
+    const sendRes = await csrfFetch('/api/userops/send', {
+      method: 'POST',
+      body: JSON.stringify({ networkId, userOp: { ...sponsor.userOp, signature } }),
+    });
+    if (!sendRes.ok) {
+      toast({ message: await readError(sendRes, 'Send failed.'), tone: 'error', icon: 'error' });
+      pushLog('ERROR', 'Bundler submission rejected.');
+      return;
+    }
+    pushLog('SUCCESS', 'Sponsored UserOp queued — owner pays zero gas. Watching receipt.');
+    toast({ message: 'Sponsored transfer submitted.', tone: 'success', icon: 'bolt' });
+    setPassphrase('');
+    setAmount('');
+    onBroadcast?.();
   }
 
   return (
@@ -324,7 +414,7 @@ export function TransferForm({
         <label className="flex items-center justify-between gap-2 rounded-md bg-surface-container px-3 py-2">
           <span className="flex flex-col">
             <span className="body-md text-on-surface">Sponsored (gasless)</span>
-            <span className="code-xs text-on-surface-variant">Paymaster — Sprint 8</span>
+            <span className="code-xs text-on-surface-variant">Paymaster pays gas · native · smart account</span>
           </span>
           <Toggle
             aria-label="Sponsored transfer"

@@ -44,4 +44,22 @@ export function getRelayerPrivateKey(): Hex {
   return key;
 }
 
+/**
+ * Resolve the operator PAYMASTER verifying-signer private key. Worker-only, used
+ * ONLY by the `userop-sponsor` processor to sign `paymasterAndData`. Throws if
+ * unset/malformed so sponsorship fails fast rather than mis-signing. The web
+ * process never loads this — the sponsor route round-trips through the worker so
+ * the key never leaves here. The value is never logged.
+ */
+export function getPaymasterSignerPrivateKey(): Hex {
+  const key = getEnv().PAYMASTER_SIGNER_PRIVATE_KEY;
+  if (!key) {
+    throw new Error('PAYMASTER_SIGNER_PRIVATE_KEY is required to sign sponsored UserOps.');
+  }
+  if (!isHex(key) || key.length !== 66) {
+    throw new Error('PAYMASTER_SIGNER_PRIVATE_KEY must be a 0x-prefixed 32-byte hex string.');
+  }
+  return key;
+}
+
 export { getEnv };
