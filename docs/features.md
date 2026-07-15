@@ -3,6 +3,42 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Security audit & hardening pass (#18)
+
+A verification pass over the complete merged app (issues #1–#16) confirming every
+SPEC §13 requirement is **enforced in code**, not just documented, with a small
+set of **targeted fixes** for the real gaps found. Full evidence table (all 15
+items → enforced/fixed → `file:line`/test/bundle-inspection) in
+`docs/security-review.md`. No feature rewrites — audit + minimal hardening only.
+
+- **Bombard maxFeePerGas ceiling** (`apps/web/lib/bombard/verify.ts`): the
+  client-signed batch verifier checked chainId/recipient/value/nonce/gas/signer
+  but never the fee, so a bulk-signed batch could ship an arbitrary
+  `maxFeePerGas`. Now enforced against the HMAC-pinned, prepare-vetted
+  `plan.maxFeePerGasWei` — completing the SPEC §13 "gas/value/maxFee before every
+  broadcast" invariant for bombard (regression test `lib/bombard/verify.test.ts`).
+- **Upload magic-byte at the write boundary** (`app/api/files/[...key]/route.ts`):
+  the volume PUT target persisted bytes after a size check only, deferring the
+  magic-byte sniff to serve time. Now runs `validateUploadedBytes` on PUT, so
+  forged/mismatched content is rejected (415) before it is ever stored.
+- **Audit-log completeness** (SPEC §13): `network.create/update/delete/setDefault`
+  were `TODO(#6)` stubs — now write `writeAudit` rows (non-secret metadata, never
+  the RPC credential). Added `auth.login`, `auth.login.failed`, and
+  `auth.password_change` audit events (no password material recorded).
+- **Verified, no change needed**: argon2id + `SameSite=Strict` JWS sessions with
+  revocation; nonce-based CSP + HSTS (no `dangerouslySetInnerHTML` anywhere);
+  double-submit CSRF + Origin on every cookie mutation; Redis rate limits on all 7
+  surfaces; RBAC re-checked in all 58 route handlers (0 missing); at-rest
+  AES-256-GCM for RPC secrets; bombard/faucet/paymaster caps + kill-switches +
+  per-user concurrency; pino redaction (incl. `rawSignedTx`) demonstrated live.
+- **Client-bundle isolation**: inspected the actual `.next/static` output — no
+  operator private-key env names, no `worker/` operator-key modules, no
+  `encryptAtRest`/`ENCRYPTION_KEY`, and no raw 32-byte key hex literals.
+- **Dependencies**: `pnpm audit` hits the retired npm endpoint (HTTP 410; CI
+  downgrades that infra error). Cross-checked via npm's bulk advisory endpoint —
+  **0 high/critical**; 2 moderate (`postcss` transitive, direct dep already on the
+  patched `8.5.19`).
+
 ## 2026-07-15 — Smart wallets & sponsored tx (ERC-4337) (#16)
 
 Gasless transactions via ERC-4337 v0.7 smart accounts: a user creates a
