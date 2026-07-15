@@ -11,8 +11,10 @@ import { getEnv } from './lib/config';
 import { getConnection } from './lib/redis';
 import { FAUCET_DRIP_QUEUE, type FaucetDripJobData } from '../apps/web/lib/faucet/keys';
 import { DEPLOY_WATCH_QUEUE, type DeployWatchJobData } from '../apps/web/lib/deployments/keys';
+import { TX_WATCH_QUEUE, type TxWatchJobData } from '../apps/web/lib/transfers/keys';
 import { processFaucetDrip } from './faucet/process-drip';
 import { processDeployWatch } from './deploy/process-watch';
+import { processTxWatch } from './tx/process-watch';
 
 function log(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
@@ -27,7 +29,7 @@ function isFinalAttempt(job: Job): boolean {
 function main(): void {
   const env = getEnv();
   log('worker.online', {
-    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE],
+    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE, TX_WATCH_QUEUE],
     nodeEnv: env.NODE_ENV,
   });
 
@@ -78,9 +80,35 @@ function main(): void {
     log('worker.error', { queue: DEPLOY_WATCH_QUEUE, error: err.message });
   });
 
+  const txWorker = new Worker<TxWatchJobData>(
+    TX_WATCH_QUEUE,
+    async (job) => {
+      const result = await processTxWatch(job.data.transferId, {
+        finalAttempt: isFinalAttempt(job),
+      });
+      log('tx.watch.processed', {
+        transferId: result.transferId,
+        status: result.status,
+        txHash: result.txHash ?? null,
+        note: result.note ?? null,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 4 },
+  );
+
+  txWorker.on('failed', (job, err) => {
+    log('tx.watch.failed', { transferId: job?.data.transferId ?? null, error: err.message });
+  });
+  txWorker.on('error', (err) => {
+    log('worker.error', { queue: TX_WATCH_QUEUE, error: err.message });
+  });
+
   const shutdown = (signal: string): void => {
     log('worker.shutdown', { signal });
-    void Promise.all([faucetWorker.close(), deployWorker.close()]).then(() => process.exit(0));
+    void Promise.all([faucetWorker.close(), deployWorker.close(), txWorker.close()]).then(() =>
+      process.exit(0),
+    );
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

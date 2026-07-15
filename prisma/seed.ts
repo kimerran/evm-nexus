@@ -98,6 +98,12 @@ async function seedAppSettings(prisma: PrismaClient): Promise<void> {
     'deploy.maxGas': '15000000',
     'deploy.maxValueWei': '0',
     'deploy.maxFeePerGasWei': '1000000000000',
+    // Transfer chain-safety ceilings + kill-switch (SPEC §8.6, AGENT.md §5). A
+    // native transfer moves value, so maxValueWei is non-zero (unlike deploys).
+    'transfer.enabled': true,
+    'transfer.maxGas': '500000',
+    'transfer.maxValueWei': '1000000000000000000000',
+    'transfer.maxFeePerGasWei': '1000000000000',
   };
 
   for (const [key, value] of Object.entries(baseline)) {

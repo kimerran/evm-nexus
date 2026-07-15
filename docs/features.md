@@ -3,6 +3,57 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — Transfers (native + assets) & Tx Lab shell (#13)
+
+Non-custodial asset transfers reusing the #12 prepare→sign→broadcast pattern: the
+server builds the UNSIGNED transfer tx, the browser signs it with a vault keypair,
+and the server broadcasts ONLY the raw signed tx — the private key never leaves the
+client (AGENT §0/§4/§5, SPEC §8.6). Plus the Transaction Lab shell (`/lab`).
+
+- **Shared transfer lib** (`apps/web/lib/transfers/`): `calldata.ts` resolves each
+  kind's on-chain call via viem against the COMMITTED token ABIs (#11) — NATIVE
+  value transfer, ERC-20 `transfer(to,amount)`, ERC-721 `safeTransferFrom(from,to,
+  tokenId)`, ERC-1155 `safeTransferFrom(from,to,id,amount,"0x")`. `schema.ts` is a
+  zod discriminated union on `kind` (checksummed addresses, positive wei/unit
+  strings, strict keys). `draft.ts` mints an opaque HMAC-signed DRAFT token (keyed
+  by `SESSION_SECRET`, 15-min expiry) pinning userId / network / chainId / the
+  resolved tx `to`+`value`+`data` / sender / ceiling snapshot — no secrets.
+  `verify.ts` parses the signed tx (`parseTransaction`+`recoverTransactionAddress`)
+  and enforces every chain-safety invariant (to/value/data equality, chainId match
+  vs pinned AND live, gas/value/fee ceilings, signer == sender). `ceilings.ts`
+  reads `transfer.*` AppSettings (kill-switch + caps; native value has a non-zero
+  cap). `balances.ts` reads ERC-20/721/1155 holdings via a mockable reader.
+  `dto.ts`/`context.ts`/`keys.ts`/`sign-client.ts` round out serialization,
+  active-network resolution, the shared `tx-watch` queue key, and the browser signer.
+- **API** (`app/api/transfers/…`, `app/api/assets/…`): `POST /prepare`
+  (`requireAuth`+CSRF, zod, transfer rate-limit) resolves the call, estimates gas
+  (+20%) + fees, verifies live chainId, returns `{ mode:'client-signed', unsignedTx,
+  transferDraftId }` — or `mode:'sponsored-unavailable'` (Sprint-8 paymaster stub)
+  when `sponsored:true`. `POST /broadcast` decodes+verifies the draft, re-confirms
+  the active network + live chainId, independently verifies the SIGNED tx against
+  the pinned policy, broadcasts via `sendRawTransaction`, creates a `Transfer`
+  (PENDING), enqueues `tx-watch`, publishes a live tx telemetry event, and audit-logs.
+  `GET /transfers[/:id]` (user-scoped) and `GET /assets/:address/balances` (RPC read
+  via the resolver) complete the surface. Money is bigint in memory, wei string at rest.
+- **`tx-watch` worker** (`worker/tx/process-watch.ts`, registered in `worker/index.ts`
+  alongside faucet-drip + deploy-watch): read-only receipt poller mirroring
+  deploy-watch — idempotent by transferId, retry-with-backoff, timeout→FAILED,
+  publishes `tx` telemetry on finalization. Designed to be shared with chat commits (#15).
+- **Live telemetry** (`lib/telemetry/tx-event.ts` + `publish.ts`): both the broadcast
+  route and the worker publish `tx` events onto the existing `nexus:telemetry:tx`
+  Redis channel that `/api/stream/telemetry` (#8 SSE) fans out.
+- **UI**: `/transfers` (new-transfer form + history table, reusable
+  `components/transfers/*`). `/lab` — the **Transaction Lab shell**: a
+  registry-driven tabbed workspace (`app/(app)/lab/panels.tsx`) with a **Transfer
+  Assets** panel and a shared **live tx feed** (SSE). Bombard (#14) and Chat (#15)
+  are reserved as `coming-soon` registry entries — they slot in by adding ONE entry
+  + component, no shell rewrite (the extension contract the issue asks for).
+- **Proven live on anvil (chainId 31337)**: deployed test ERC-20/721/1155 via #11
+  artifacts, then prepare→sign→broadcast→tx-watch SUCCESS for all four kinds —
+  native +1 ETH, ERC-20 0→100e18, ERC-721 ownerOf moved sender→recipient, ERC-1155
+  0→10; balances endpoint reflected each change; a chainId-1 signature was rejected
+  (400 "chainId mismatch: signed 1 != active 31337") before any broadcast.
+
 ## 2026-07-15 — Deployment flow: estimate → sign → broadcast (#12)
 
 Non-custodial token launches: the server builds the UNSIGNED deploy tx, the
