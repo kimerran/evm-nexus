@@ -75,6 +75,46 @@ encrypted keystore blob a user opts to persist (AGENT §0/§6, SPEC §4.1/§8.3)
   returns the blob with no plaintext, CSRF-less → 403, unauth → 401, DELETE → 200; DB row
   holds only ciphertext and the server log shows zero plaintext key.
 
+## 2026-07-15 — Faucet API + drip worker (#10)
+
+Rate-limited, capped native-token faucet: an authenticated request enqueues a
+BullMQ job that the worker signs with the operator key and broadcasts, all
+gated by kill-switch, per-request ceiling, per-address cooldown, and daily cap.
+
+- **Decision core** (`apps/web/lib/faucet/`): `policy.ts` (`evaluateFaucetRequest`)
+  is the single pure ceiling check (kill-switch → invalid → ceiling → cooldown →
+  daily-cap, deterministic order) and `faucetProcessDecision` is the idempotency
+  gate (only `PENDING|QUEUED` process). `usage.ts` (`summarizeFaucetUsage`) reduces
+  an address's recent `FaucetRequest` rows into daily spend + cooldown state
+  (FAILED/REJECTED never count). Both are dependency-free so the API boundary AND
+  the worker reach an identical verdict. Amounts are bigint/wei throughout;
+  `schema.ts` validates + checksums the address (viem `getAddress`) and keeps the
+  amount a wei string (rejects floats/`1e18`, no `Number()`).
+- **API** (`app/api/faucet/…`): `POST /request` (`requireAuth` + CSRF, zod, short-window
+  Redis rate-limit per address+IP+user, policy pre-check on the ACTIVE network, then
+  persists a `FaucetRequest` and enqueues `faucet-drip`, returns `{requestId,status:"QUEUED"}`,
+  audited via `writeAudit` with no secrets); `GET /requests` (caller's history);
+  `GET /quota` (active-network ceilings + address usage, all wei strings).
+- **Queue** (`apps/web/lib/queue/`): a BullMQ producer (`enqueueFaucetDrip`) on a
+  dedicated `maxRetriesPerRequest:null` connection; the job id is the request id so a
+  duplicate enqueue is a Redis-level no-op. Adds `bullmq`.
+- **Worker** (`worker/`): the `faucet-drip` consumer is the ATOMIC authority — under a
+  per-address Redis lock it re-reads the row + network + global kill-switch, re-runs the
+  pure policy against DB usage (excluding the row itself), verifies the live chainId
+  equals the configured one BEFORE broadcast, signs a native transfer with
+  `FAUCET_PRIVATE_KEY` (loaded ONLY here), polls the receipt, and advances
+  `PENDING→BROADCAST→CONFIRMING→SUCCESS|FAILED` with the tx hash. Logs only ids /
+  statuses / tx hashes — never the key or a raw signed tx. Adds `bullmq`, `ioredis`,
+  `viem` to the worker.
+- **UI** (`app/(app)/faucet`): address input, amount slider capped at the per-request
+  drip, request button, and a live event log polled from `/api/faucet/requests`; the
+  shared keypair table (#9) is placeheld, not reimplemented.
+- Live-verified on anvil (chainId 31337): dest balance 0 → 2 ETH, tx confirmed,
+  `FaucetRequest=SUCCESS`+txHash; immediate 2nd request → 429 cooldown; quota decremented
+  (used 2 / 500 ETH); audit row written; the faucet key appears in no log or client
+  bundle. 17 new Vitest cases (ceiling, cooldown, daily-cap, kill-switch, idempotency,
+  usage windows, schema).
+
 ## 2026-07-15 — Network config & viem client resolver (#7)
 
 Admin-managed, RPC-secret-safe network configuration plus the single viem client
