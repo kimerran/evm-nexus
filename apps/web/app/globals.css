@@ -1,18 +1,284 @@
 @import 'tailwindcss';
 
-/* Minimal dark baseline for Sprint 0. The full BRAND.md token set (colors,
-   radii, spacing, font families, type scale) is ported into this @theme block
-   in the "Design system & app shell" issue. */
+/*
+ * EVM Nexus design system — BRAND.md ported to Tailwind v4's CSS-first @theme.
+ * Dark-only. No tailwind.config.js. Every token below maps 1:1 to BRAND §2/§3/§5.
+ * Font families reference the next/font CSS variables wired in app/layout.tsx
+ * (--font-hanken = Hanken Grotesk, --font-jetbrains = JetBrains Mono).
+ */
 @theme {
-  --color-bg: #0a0e14;
-  --color-surface: #111823;
-  --color-fg: #e6edf3;
-  --color-muted: #8b98a9;
-  --color-accent: #4fd1c5;
+  /* ---- §3 Font families ---- */
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, 'JetBrains Mono', monospace;
+  /* Per-scale family tokens (BRAND §9 mapping). */
+  --font-display-lg: var(--font-hanken), sans-serif;
+  --font-headline-md: var(--font-hanken), sans-serif;
+  --font-body-md: var(--font-hanken), sans-serif;
+  --font-code-sm: var(--font-jetbrains), monospace;
+  --font-code-xs: var(--font-jetbrains), monospace;
+  --font-label-caps: var(--font-jetbrains), monospace;
+
+  /* ---- §2.1 Core surfaces ---- */
+  --color-background: #0d1516;
+  --color-surface: #0d1516;
+  --color-surface-dim: #0d1516;
+  --color-surface-container-lowest: #080f11;
+  --color-surface-container-low: #151d1e;
+  --color-surface-container: #192122;
+  --color-surface-container-high: #242b2d;
+  --color-surface-container-highest: #2e3638;
+  --color-surface-bright: #333a3c;
+  --color-surface-variant: #2e3638;
+
+  /* ---- §2.2 Primary (electric cyan) ---- */
+  --color-primary: #c3f5ff;
+  --color-primary-container: #00e5ff;
+  --color-primary-fixed: #9cf0ff;
+  --color-primary-fixed-dim: #00daf3;
+  --color-surface-tint: #00daf3;
+  --color-on-primary: #00363d;
+  --color-on-primary-container: #00626e;
+  --color-on-primary-fixed: #001f24;
+  --color-on-primary-fixed-variant: #004f58;
+  --color-inverse-primary: #006875;
+
+  /* ---- §2.3 Secondary (slate blue) ---- */
+  --color-secondary: #b7c8e1;
+  --color-secondary-container: #3a4a5f;
+  --color-secondary-fixed: #d3e4fe;
+  --color-secondary-fixed-dim: #b7c8e1;
+  --color-on-secondary: #213145;
+  --color-on-secondary-container: #a9bad3;
+  --color-on-secondary-fixed: #0b1c30;
+  --color-on-secondary-fixed-variant: #38485d;
+
+  /* ---- §2.4 Tertiary (amber) ---- */
+  --color-tertiary: #ffeac0;
+  --color-tertiary-container: #fec931;
+  --color-tertiary-fixed: #ffdf96;
+  --color-tertiary-fixed-dim: #f3bf26;
+  --color-on-tertiary: #3e2e00;
+  --color-on-tertiary-container: #6f5500;
+  --color-on-tertiary-fixed: #251a00;
+  --color-on-tertiary-fixed-variant: #594400;
+
+  /* ---- §2.5 Error (coral) ---- */
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
+  --color-on-error: #690005;
+  --color-on-error-container: #ffdad6;
+
+  /* ---- §2.6 Text, outlines, inverse ---- */
+  --color-on-surface: #dce4e5;
+  --color-on-background: #dce4e5;
+  --color-on-surface-variant: #bac9cc;
+  --color-outline: #849396;
+  --color-outline-variant: #3b494c;
+  --color-inverse-surface: #dce4e5;
+  --color-inverse-on-surface: #2a3233;
+
+  /* ---- §2.7 Status LED (literal online/success only, never brand) ---- */
+  --color-led-online: #22c55e;
+  --color-led-success: #16a34a;
+
+  /* ---- §5.1 Border radius (full stays a circle for dots/knobs, per §5.1 note) ---- */
+  --radius-sm: 0.125rem; /* BRAND DEFAULT — 2px */
+  --radius-lg: 0.25rem; /* 4px — chips, small buttons, table cells */
+  --radius-xl: 0.5rem; /* 8px — cards, panels, inputs, primary buttons */
+  --radius-2xl: 0.75rem; /* 12px — BRAND `full` for the largest containers only */
+
+  /* ---- §5.2 Spacing scale ---- */
+  --spacing-base: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-gutter: 20px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-margin-mobile: 16px;
+  --spacing-margin-desktop: 40px;
 }
 
-html,
-body {
-  background-color: var(--color-bg);
-  color: var(--color-fg);
+/*
+ * §3.1 Type scale utilities. Each sets family + size + line-height + tracking +
+ * weight in one class so consumers write `class="display-lg"` etc.
+ */
+@utility display-lg {
+  font-family: var(--font-display-lg);
+  font-size: 48px;
+  line-height: 56px;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+@utility headline-md {
+  font-family: var(--font-headline-md);
+  font-size: 24px;
+  line-height: 32px;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+@utility body-md {
+  font-family: var(--font-body-md);
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+@utility label-caps {
+  font-family: var(--font-label-caps);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+@utility code-sm {
+  font-family: var(--font-code-sm);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+@utility code-xs {
+  font-family: var(--font-code-xs);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* Base document — dark-only cockpit surface (BRAND §1, §9). */
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* §4 Material Symbols Outlined — default variation FILL 0, wght 400, GRAD 0, opsz 24. */
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 1.25rem;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    vertical-align: middle;
+    -webkit-font-smoothing: antialiased;
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 24;
+  }
+  /* §4 FILL 1 for active/emphasis feature icons. */
+  .material-symbols-outlined.is-filled {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 24;
+  }
+}
+
+/* §8 Custom scrollbar — 4px, thumb outline-variant → hover primary-fixed-dim. */
+@utility custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-outline-variant) transparent;
+  &::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--color-outline-variant);
+    border-radius: 2px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary-fixed-dim);
+  }
+}
+
+/* §7.7 Range slider — track + glowing cyan thumb. */
+@layer components {
+  .nexus-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-surface-container-highest);
+    outline: none;
+  }
+  .nexus-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: var(--color-primary-fixed-dim);
+    box-shadow: 0 0 10px rgba(0, 218, 243, 0.4);
+    cursor: pointer;
+    border: none;
+  }
+  .nexus-slider::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: var(--color-primary-fixed-dim);
+    box-shadow: 0 0 10px rgba(0, 218, 243, 0.4);
+    cursor: pointer;
+    border: none;
+  }
+  .nexus-slider:focus-visible {
+    outline: 1px solid var(--color-primary);
+    outline-offset: 4px;
+  }
+}
+
+/* §8 Motion — status LED pulse keyframe (scale 1→1.5→1, opacity fade, 2s). */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.6;
+  }
+}
+@utility status-pulse {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/*
+ * §8 Respect prefers-reduced-motion: disable confetti/particles/pulse/bounce and
+ * neutralize animations + transitions when the user asks for reduced motion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .status-pulse,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
 }
