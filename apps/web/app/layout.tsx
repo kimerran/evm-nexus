@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { headers } from 'next/headers';
 import { Hanken_Grotesk, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -33,10 +34,16 @@ export const metadata: Metadata = {
   description: 'Operator console + smart-contract toolkit for test EVM chains.',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Consume the per-request CSP nonce set by proxy.ts. Next stamps this nonce
+  // onto its own scripts automatically; we surface it here for any nonce-aware
+  // client (and to document the strict, nonce-based CSP in the served HTML).
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
+
   return (
     <html lang="en" className={`dark ${hanken.variable} ${jetbrainsMono.variable}`} data-theme="dark">
       <head>
+        {nonce ? <meta name="csp-nonce" content={nonce} /> : null}
         {/*
           §4 Material Symbols Outlined — the icon font. Loaded as a stylesheet
           link (it is a runtime-only decorative resource, so it never blocks the

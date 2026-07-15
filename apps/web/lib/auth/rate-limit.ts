@@ -1,43 +1,27 @@
-// Login rate limiter — Redis-backed, per-IP + per-username (SPEC §12, AGENT.md §5).
+// Login rate limiter — thin adapter over the general limiter (SPEC §12, AGENT.md §5).
 //
-// SERVER-ONLY. A small, SELF-CONTAINED fixed-window failure counter for the
-// login endpoint only. It counts FAILED attempts so a legitimate successful
-// login never burns quota, and blocks once either the per-IP or the
-// per-username failure count exceeds its window limit. Errors are generic and
-// carry no user-enumeration signal (a blocked known user and a blocked unknown
-// user look identical to the caller).
-//
-// TODO(#5): issue #5 generalizes rate limiting into a reusable limiter (faucet,
-// bombard, chat, paymaster, per-route configs). This module is intentionally
-// scoped to auth and should be REPLACED by / folded into that limiter — do not
-// grow it into the general-purpose one here.
-import Redis from 'ioredis';
-import { getEnv } from '@nexus/config/env';
-
-const WINDOW_SECONDS = 60;
-const MAX_FAILURES_PER_USERNAME = 5;
-const MAX_FAILURES_PER_IP = 20;
-const KEY_PREFIX = 'auth:login:fail';
-
-const globalForRedis = globalThis as unknown as { authRedis?: Redis };
-
-function getRedis(): Redis {
-  globalForRedis.authRedis ??= new Redis(getEnv().REDIS_URL, {
-    // Keep login snappy and resilient: a slow/absent Redis must not hang the
-    // request. On persistent failure we fail OPEN (see checkLoginRateLimit).
-    maxRetriesPerRequest: 1,
-    lazyConnect: false,
-  });
-  return globalForRedis.authRedis;
-}
+// SERVER-ONLY. Issue #5 generalized rate limiting into `@/lib/rate-limit`
+// (Redis sliding window, keyable per user/IP/address). This module keeps the
+// login-specific POLICY that predates it: count only FAILED attempts (a
+// successful login never burns quota), block when either the per-username or
+// per-IP failure window is exhausted, and stay generic — a blocked known user
+// and a blocked unknown user are indistinguishable to the caller (no user
+// enumeration). It now delegates all Redis work to the shared limiter.
+import {
+  RATE_LIMITS,
+  peekRateLimit,
+  rateLimitKey,
+  recordRateLimitHit,
+  resetRateLimit,
+} from '@/lib/rate-limit';
 
 // Normalize the username into the key so case variations can't multiply the
 // allowance. (DB usernames are unique; this only affects the counter key.)
 function usernameKey(username: string): string {
-  return `${KEY_PREFIX}:user:${username.trim().toLowerCase()}`;
+  return rateLimitKey('auth:login:user', username);
 }
 function ipKey(ip: string): string {
-  return `${KEY_PREFIX}:ip:${ip}`;
+  return rateLimitKey('auth:login:ip', ip);
 }
 
 export interface RateLimitDecision {
@@ -51,51 +35,29 @@ export interface RateLimitDecision {
  * current failure counters WITHOUT incrementing (increment happens only on an
  * actual failure via {@link registerFailedLogin}). Fails OPEN on Redis errors so
  * a Redis outage degrades brute-force protection rather than locking everyone
- * out — the trade-off documented in AGENT.md §5.
+ * out.
  */
 export async function checkLoginRateLimit(ip: string, username: string): Promise<RateLimitDecision> {
-  try {
-    const redis = getRedis();
-    const uKey = usernameKey(username);
-    const iKey = ipKey(ip);
-    const [uCountRaw, iCountRaw, uTtl, iTtl] = await Promise.all([
-      redis.get(uKey),
-      redis.get(iKey),
-      redis.ttl(uKey),
-      redis.ttl(iKey),
-    ]);
-
-    const uCount = Number(uCountRaw ?? 0);
-    const iCount = Number(iCountRaw ?? 0);
-
-    const userBlocked = uCount >= MAX_FAILURES_PER_USERNAME;
-    const ipBlocked = iCount >= MAX_FAILURES_PER_IP;
-    if (userBlocked || ipBlocked) {
-      const ttls = [userBlocked ? uTtl : 0, ipBlocked ? iTtl : 0].filter((t) => t > 0);
-      const retryAfterSec = ttls.length > 0 ? Math.max(...ttls) : WINDOW_SECONDS;
-      return { allowed: false, retryAfterSec };
-    }
-    return { allowed: true, retryAfterSec: 0 };
-  } catch {
-    return { allowed: true, retryAfterSec: 0 };
+  const [user, byIp] = await Promise.all([
+    peekRateLimit(usernameKey(username), RATE_LIMITS.loginPerUsername),
+    peekRateLimit(ipKey(ip), RATE_LIMITS.loginPerIp),
+  ]);
+  if (!user.allowed || !byIp.allowed) {
+    return { allowed: false, retryAfterSec: Math.max(user.retryAfterSec, byIp.retryAfterSec) };
   }
+  return { allowed: true, retryAfterSec: 0 };
 }
 
 /**
  * Record a FAILED login attempt, incrementing both the per-username and per-IP
- * fixed-window counters and (re)arming their TTL on first use. Best-effort:
- * swallows Redis errors so a limiter outage never breaks the login path.
+ * sliding-window counters. Best-effort: swallows Redis errors so a limiter
+ * outage never breaks the login path.
  */
 export async function registerFailedLogin(ip: string, username: string): Promise<void> {
-  try {
-    const redis = getRedis();
-    for (const key of [usernameKey(username), ipKey(ip)]) {
-      const count = await redis.incr(key);
-      if (count === 1) await redis.expire(key, WINDOW_SECONDS);
-    }
-  } catch {
-    // best-effort; limiter must never break login
-  }
+  await Promise.all([
+    recordRateLimitHit(usernameKey(username), RATE_LIMITS.loginPerUsername),
+    recordRateLimitHit(ipKey(ip), RATE_LIMITS.loginPerIp),
+  ]);
 }
 
 /**
@@ -104,9 +66,5 @@ export async function registerFailedLogin(ip: string, username: string): Promise
  * (shared NAT / attacker-behind-proxy must still decay on its own).
  */
 export async function clearUsernameFailures(username: string): Promise<void> {
-  try {
-    await getRedis().del(usernameKey(username));
-  } catch {
-    // best-effort
-  }
+  await resetRateLimit(usernameKey(username));
 }

@@ -16,6 +16,7 @@ import {
   clearUsernameFailures,
   registerFailedLogin,
 } from '@/lib/auth/rate-limit';
+import { generateCsrfToken, setCsrfCookie } from '@/lib/auth/csrf';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,5 +76,8 @@ export async function POST(req: NextRequest) {
 
   const res = jsonOk({ user: { id: user.id, username: user.username, role: user.role } });
   setSessionCookie(res, token, expiresAt);
+  // Issue a fresh CSRF token alongside the new session so subsequent cookie-authed
+  // mutations (logout, change-password, …) have a double-submit token to echo.
+  setCsrfCookie(res, generateCsrfToken());
   return res;
 }

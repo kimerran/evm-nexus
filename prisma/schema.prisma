@@ -37,6 +37,27 @@ model User {
   chatMessages   ChatMessage[]
   faucetRequests FaucetRequest[]
   auditLogs      AuditLog[]
+  apiKeys        ApiKey[]
+}
+
+// Personal API keys (`nxs_…`) for scripting (SPEC §8.11, §12). The raw key is
+// shown ONCE at issue time and never stored: only its sha256 hash is persisted
+// (unique, for O(1) lookup on the auth path), plus a short `prefix` for display.
+// Scope = the issuing user's role (resolved live from `user.role`). Issue #6
+// layers the issue/list/revoke management UI + endpoints on top of this model.
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String // human label, e.g. "ci-bot"
+  keyHash    String    @unique // sha256(rawToken) hex — never the raw key
+  prefix     String // first chars of the token for display (e.g. "nxs_ab12cd34")
+  lastUsedAt DateTime?
+  expiresAt  DateTime? // optional expiry; null = never expires
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime? // set on revoke; a revoked key never authenticates
+
+  @@index([userId])
 }
 
 enum Role {
