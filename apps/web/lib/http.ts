@@ -5,6 +5,8 @@
 // every handler returns a uniform shape and login/auth errors stay generic.
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { AppError, RateLimitError } from '@/lib/errors';
+import { logger } from '@/lib/log';
 
 /** Success envelope: `{ data }`. */
 export function jsonOk<T>(data: T, init?: ResponseInit): NextResponse {
@@ -19,6 +21,25 @@ export function jsonError(
   init?: ResponseInit,
 ): NextResponse {
   return NextResponse.json({ error: { code, message } }, { ...init, status });
+}
+
+/**
+ * Map any thrown value to the SPEC §8 error envelope. Known {@link AppError}s
+ * pass their status/code/message through (rate limits also emit `Retry-After`);
+ * anything else becomes a generic 500 whose message reveals nothing — the real
+ * error is logged (redacted) server-side, never returned to the client.
+ */
+export function toErrorResponse(err: unknown): NextResponse {
+  if (err instanceof RateLimitError) {
+    return jsonError(err.status, err.code, err.message, {
+      headers: { 'Retry-After': String(err.retryAfterSec) },
+    });
+  }
+  if (err instanceof AppError) {
+    return jsonError(err.status, err.code, err.message);
+  }
+  logger.error({ err }, 'unhandled route error');
+  return jsonError(500, 'INTERNAL', 'An unexpected error occurred.');
 }
 
 /**

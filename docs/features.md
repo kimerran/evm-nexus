@@ -3,6 +3,55 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-15 — AuthZ, CSRF, rate-limiting & security headers (#5)
+
+The security spine every downstream feature imports.
+
+- **RBAC** (`apps/web/lib/auth/require-role.ts`, `principal.ts`): `requireRole(role, req?)`
+  is the authoritative gate, called at the top of every route handler / server
+  action — never hidden UI. It resolves a `Principal` from a session cookie OR a
+  personal API key, then the pure `authorize()` decision throws `UnauthenticatedError`
+  (→401) / `ForbiddenError` (→403). `roleSatisfies` keeps ADMIN ⊇ USER. Re-checked
+  server-side in the handler, independent of `proxy.ts`.
+- **Nonce-based CSP + strict headers** (`apps/web/proxy.ts`, `app/layout.tsx`): a
+  per-request nonce is generated in `proxy.ts`, injected into the request headers so
+  Next stamps it onto every framework/hydration script, and echoed in a
+  `Content-Security-Policy` with **no `unsafe-inline` for scripts**
+  (`script-src 'self' 'nonce-…' 'strict-dynamic'`; dev adds `'unsafe-eval'` only).
+  Inline STYLES (next/font, Material Symbols) are allowed via `style-src 'unsafe-inline'`.
+  Plus HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`. Root layout consumes the nonce
+  (`headers().get('x-nonce')`). Verified: `/login` + `/dashboard` render and hydrate
+  with 0 un-nonced inline scripts.
+- **Sliding-window rate limiter** (`apps/web/lib/rate-limit.ts`, `redis.ts`): reusable,
+  keyable per-user / per-IP / per-address (Redis sorted-set window), with named
+  `RATE_LIMITS` for login/faucet/deploy/transfer/bombard/chat/userops. `consume` /
+  `peek` / `record` / `reset` behind an injectable store (in-memory store + fake clock
+  for deterministic tests); fails **open** on Redis errors. The #4 login limiter now
+  delegates to it (`lib/auth/rate-limit.ts`).
+- **CSRF** (`apps/web/lib/auth/csrf.ts`): double-submit token (readable `nexus_csrf`
+  cookie echoed in `x-csrf-token`) + Origin/Referer check against `APP_URL`, constant-time
+  compare. `proxy.ts` seeds the cookie on HTML navigations; login issues a fresh one.
+  Wired into `logout` + `change-password` (login is pre-auth).
+- **API-key auth** (`apps/web/lib/auth/api-key.ts` + new `ApiKey` model/migration):
+  `Authorization: Bearer nxs_…` → sha256 lookup on `ApiKey.keyHash` (raw key never
+  stored), checks revoked/expired/active, scope = issuing user's role. Model:
+  `id, userId→User.apiKeys, name, keyHash @unique, prefix, lastUsedAt, expiresAt,
+  createdAt, revokedAt`. Management UI/endpoints land in #6.
+- **Logging** (`apps/web/lib/log.ts`): pino + pino-http with redaction of `password`,
+  `authorization`, `cookie`, `privateKey`, `mnemonic`, `keystore`, `rawSignedTx`
+  (bare + one-level-nested + header locations). Log tx hashes, never raw signed tx.
+- **Error mapper** (`apps/web/lib/errors.ts` typed errors → `lib/http.ts`
+  `toErrorResponse`): `{ error: { code, message } }` envelopes; unknown throws → generic
+  500, logged (redacted) — no stack traces / secrets leak.
+- **Demo/real guarded routes**: `GET /api/me` (any principal, session or key) and
+  `GET /api/audit` (ADMIN, SPEC §8.11) prove the gate live.
+- Vitest: rate-limiter window (block past threshold + recover after window + partial
+  slide + peek/record/reset), CSRF reject/accept, RBAC deny (USER→ADMIN = 403),
+  API-key format/hash/parse, log redaction. All gates green; live-verified RBAC 401/403
+  (incl. spoofed CVE-2025-29927 header), CSP render/hydrate, rate-limit block+recovery,
+  valid/revoked/invalid API key.
+
 ## 2026-07-15 — Authentication & sessions (#4)
 
 - **Password hashing** (`apps/web/lib/auth/password.ts`): argon2id via

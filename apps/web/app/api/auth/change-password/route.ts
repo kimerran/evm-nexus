@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
-import { getClientIp, jsonError } from '@/lib/http';
+import { getClientIp, jsonError, toErrorResponse } from '@/lib/http';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
 import {
   getSession,
@@ -17,6 +17,7 @@ import {
   rotateSession,
   setSessionCookie,
 } from '@/lib/auth/session';
+import { requireCsrf } from '@/lib/auth/csrf';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,13 @@ const changePasswordSchema = z
   .strict();
 
 export async function POST(req: NextRequest) {
+  // Cookie-authenticated mutation → CSRF (double-submit + Origin) required.
+  try {
+    requireCsrf(req);
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+
   const session = await getSession();
   if (!session) {
     return jsonError(401, 'UNAUTHENTICATED', 'Not authenticated.');
