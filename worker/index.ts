@@ -1,24 +1,37 @@
 // BullMQ worker entrypoint (SPEC §9, AGENT.md §0).
 //
 // This process is the ONLY place the operator faucet signer key is ever loaded
-// (config.getFaucetPrivateKey). It registers the `faucet-drip` consumer; other
-// consumers (bombard, watchers, bundler) are added in later sprints. Logs carry
-// only ids / statuses / tx HASHES — never the key or a raw signed tx.
+// (config.getFaucetPrivateKey). It registers the `faucet-drip` consumer and the
+// read-only `deploy-watch` consumer; other consumers (bombard, bundler) are added
+// in later sprints. Logs carry only ids / statuses / tx HASHES — never the key or
+// a raw signed tx.
 import { Worker } from 'bullmq';
+import type { Job } from 'bullmq';
 import { getEnv } from './lib/config';
 import { getConnection } from './lib/redis';
 import { FAUCET_DRIP_QUEUE, type FaucetDripJobData } from '../apps/web/lib/faucet/keys';
+import { DEPLOY_WATCH_QUEUE, type DeployWatchJobData } from '../apps/web/lib/deployments/keys';
 import { processFaucetDrip } from './faucet/process-drip';
+import { processDeployWatch } from './deploy/process-watch';
 
 function log(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
 }
 
+/** Whether this is the final BullMQ attempt for a job (so a watcher can finalize). */
+function isFinalAttempt(job: Job): boolean {
+  const max = job.opts.attempts ?? 1;
+  return job.attemptsMade + 1 >= max;
+}
+
 function main(): void {
   const env = getEnv();
-  log('worker.online', { queue: FAUCET_DRIP_QUEUE, nodeEnv: env.NODE_ENV });
+  log('worker.online', {
+    queues: [FAUCET_DRIP_QUEUE, DEPLOY_WATCH_QUEUE],
+    nodeEnv: env.NODE_ENV,
+  });
 
-  const worker = new Worker<FaucetDripJobData>(
+  const faucetWorker = new Worker<FaucetDripJobData>(
     FAUCET_DRIP_QUEUE,
     async (job) => {
       const result = await processFaucetDrip(job.data.requestId);
@@ -33,16 +46,41 @@ function main(): void {
     { connection: getConnection(), concurrency: 4 },
   );
 
-  worker.on('failed', (job, err) => {
+  faucetWorker.on('failed', (job, err) => {
     log('faucet.drip.failed', { requestId: job?.data.requestId ?? null, error: err.message });
   });
-  worker.on('error', (err) => {
-    log('worker.error', { error: err.message });
+  faucetWorker.on('error', (err) => {
+    log('worker.error', { queue: FAUCET_DRIP_QUEUE, error: err.message });
+  });
+
+  const deployWorker = new Worker<DeployWatchJobData>(
+    DEPLOY_WATCH_QUEUE,
+    async (job) => {
+      const result = await processDeployWatch(job.data.deploymentId, {
+        finalAttempt: isFinalAttempt(job),
+      });
+      log('deploy.watch.processed', {
+        deploymentId: result.deploymentId,
+        status: result.status,
+        contractAddress: result.contractAddress ?? null,
+        txHash: result.txHash ?? null,
+        note: result.note ?? null,
+      });
+      return result;
+    },
+    { connection: getConnection(), concurrency: 4 },
+  );
+
+  deployWorker.on('failed', (job, err) => {
+    log('deploy.watch.failed', { deploymentId: job?.data.deploymentId ?? null, error: err.message });
+  });
+  deployWorker.on('error', (err) => {
+    log('worker.error', { queue: DEPLOY_WATCH_QUEUE, error: err.message });
   });
 
   const shutdown = (signal: string): void => {
     log('worker.shutdown', { signal });
-    void worker.close().then(() => process.exit(0));
+    void Promise.all([faucetWorker.close(), deployWorker.close()]).then(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

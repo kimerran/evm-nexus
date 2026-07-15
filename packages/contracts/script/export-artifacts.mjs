@@ -40,9 +40,9 @@ for (const name of contracts) {
 // Barrel that re-exports every generated artifact plus a name→artifact registry.
 const barrel =
   `${banner}\n` +
-  contracts.map((n) => `export * from "./${n}.js";`).join("\n") +
+  contracts.map((n) => `export * from "./${n}";`).join("\n") +
   "\n\n" +
-  contracts.map((n) => `import { ${n}Abi, ${n}Bytecode } from "./${n}.js";`).join("\n") +
+  contracts.map((n) => `import { ${n}Abi, ${n}Bytecode } from "./${n}";`).join("\n") +
   "\n\n" +
   "export const contractArtifacts = {\n" +
   contracts.map((n) => `  ${n}: { abi: ${n}Abi, bytecode: ${n}Bytecode },`).join("\n") +

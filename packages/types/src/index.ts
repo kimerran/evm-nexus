@@ -19,4 +19,4 @@ export type WeiString = string;
  * via `viem` `deployContract` — Solidity is never compiled at request time
  * (AGENT.md §7, SPEC §6).
  */
-export * from "./contracts/index.js";
+export * from "./contracts/index";

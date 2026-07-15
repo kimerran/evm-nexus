@@ -92,6 +92,12 @@ async function seedAppSettings(prisma: PrismaClient): Promise<void> {
     'faucet.dailyCapWei': env.FAUCET_DAILY_CAP_WEI,
     'faucet.enabled': true,
     'paymaster.enabled': true,
+    // Deploy chain-safety ceilings + kill-switch (SPEC §8.5, AGENT.md §5). Gas
+    // units + wei stay strings to avoid precision loss.
+    'deploy.enabled': true,
+    'deploy.maxGas': '15000000',
+    'deploy.maxValueWei': '0',
+    'deploy.maxFeePerGasWei': '1000000000000',
   };
 
   for (const [key, value] of Object.entries(baseline)) {
