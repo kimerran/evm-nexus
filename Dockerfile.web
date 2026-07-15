@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+#
+# EVM Nexus — `web` service (Next.js 16 app) for Railway (SPEC §14).
+#
+# Multi-stage: install → prisma generate → next build → runtime.
+# `next.config.ts` sets `output: 'standalone'`, so the build emits a
+# self-contained server under apps/web/.next/standalone that runs with `node`
+# — no pnpm/Next CLI needed at runtime.
+#
+# The Railway RELEASE command (`pnpm prisma migrate deploy [&& db seed]`, see
+# railway.web.json) runs in this same image before the new version goes live, so
+# the runtime keeps the pinned Prisma CLI + migrations available (pnpm's
+# symlinked store makes a partial copy fragile — we bring the built workspace).
+
+# ---- base: pinned Node + pnpm via corepack ----
+FROM node:24.18.0-bookworm-slim AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.6.4 --activate
+WORKDIR /app
+
+# ---- builder: deps + prisma client + production build ----
+FROM base AS builder
+# THROWAWAY build-time env. `next build` collects page data and validates env via
+# @nexus/config (getEnv), and `prisma generate` resolves env('DATABASE_URL') from
+# prisma.config.ts (it never connects). Real secrets are injected by Railway at
+# RUNTIME and are never baked into the image.
+ENV NODE_ENV=production \
+    APP_URL=http://localhost:3000 \
+    SESSION_SECRET=build-only-session-secret-build-only-session \
+    ENCRYPTION_KEY=build-only-encryption-key-build-only-key32 \
+    CSRF_SECRET=build-only-csrf-secret-16 \
+    DATABASE_URL=postgresql://build:build@localhost:5432/build?schema=public \
+    REDIS_URL=redis://localhost:6379
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm prisma generate
+RUN pnpm build
+# Drop the Next build cache — not needed to serve or migrate.
+RUN rm -rf apps/web/.next/cache
+
+# ---- runner: production runtime ----
+FROM base AS runner
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+# The whole built workspace: (a) the standalone server for a lean runtime process
+# and (b) the pinned Prisma CLI + migrations for the release command.
+COPY --from=builder /app ./
+# Run as the unprivileged `node` user shipped in the base image.
+RUN chown -R node:node /app
+USER node
+EXPOSE 3000
+# Start the Next production server. `pnpm start` → `next start` serves the built
+# app (incl. static assets) and reads real env injected by Railway at runtime.
+# Railway runs `prisma migrate deploy` (release command) against this image first.
+# NB: `output: 'standalone'` is also emitted (apps/web/.next/standalone) as an
+# ultra-slim alternative runtime — see DEPLOY.md — but the shipped image uses
+# `pnpm start` so the pinned Prisma CLI stays available for the release command.
+CMD ["pnpm", "start"]
