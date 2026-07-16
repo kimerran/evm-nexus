@@ -3,6 +3,44 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-16 — Full test coverage + Playwright E2E happy-path (#17)
+
+Brought the test suite up to the AGENT.md §8 bar and added the headline
+deliverable: a single Playwright E2E that drives the **whole product** through the
+real browser vault on anvil, with the app + worker + chain all running.
+
+- **Vitest projects** (`vitest.config.ts`): split into a fast `unit` project
+  (`pnpm test`) and an `integration` project (`pnpm test:integration`,
+  `*.integration.test.ts`). A shared `vitest.setup.ts` loads `.env` before any
+  module evaluates so `getEnv()` never throws on import (fixes a `budget.test.ts`
+  crash and unblocks integration specs). CI (throwaway job env) still wins over
+  `.env` since dotenv never overrides a set variable.
+- **Unit gap** filled: `lib/bombard/draft.test.ts` covers the HMAC-signed bombard
+  plan — the nonce-range/"nonce manager" integrity — round-trip, tamper
+  (bad-signature), malformed, and expiry. Existing suites already cover zod
+  schemas, crypto round-trips, rate limiter, session/JWT, and wei formatting.
+- **Integration** (`apps/web/test/integration/*.integration.test.ts`): real route
+  handlers + workers against the **live test Postgres + Redis + anvil**, asserting
+  BOTH DB state AND on-chain effects — faucet drip (row → SUCCESS + recipient
+  balance grows), ERC-20 deploy (row → SUCCESS + bytecode on-chain), native
+  transfer (row → SUCCESS + balance), chat commit + verify (on-chain
+  `MessageCommitted` hash matches). Each carries one failure-path assertion
+  (over-ceiling faucet, wrong-signer deploy/transfer, tampered chat → not
+  verified).
+- **Playwright E2E** (`e2e/journey.spec.ts` + `e2e/global-setup.ts`): the full
+  journey — login → keypair vault (generate + persist, **client-side** crypto) →
+  faucet drip → deploy ERC-20 → transfer → bombard (N=5) → chat commit + verify →
+  sponsored ERC-4337 tx — all signed in-browser through the actual UI. Global
+  setup deploys the 4337 stack + ChatLog, resets per-run feature rows, and spawns
+  the worker (torn down after); `webServer` runs `next dev` (dev keeps the session
+  cookie non-Secure so login works over http://localhost).
+- **CI** (`.github/workflows/ci.yml`): new `integration-e2e` job with Postgres +
+  Redis service containers and a local anvil runs migrate/seed → integration →
+  Playwright browser install → E2E; the existing fast job keeps
+  typecheck/lint/unit/forge/build/audit. Merge is gated on both.
+
+Result: unit 262 · integration 8 · forge 44 · E2E 8/8 legs green.
+
 ## 2026-07-15 — Security audit & hardening pass (#18)
 
 A verification pass over the complete merged app (issues #1–#16) confirming every
