@@ -3,6 +3,37 @@
 Running log of shipped features. Append one entry per change (newest first),
 per the auto-dev workflow.
 
+## 2026-07-16 — Railway deployment config: web + worker services (#19)
+
+Deploy artifacts for the two-service Railway monorepo (SPEC §10/§14, AGENT.md §9)
+— no product/runtime code changed beyond enabling Next standalone output.
+
+- **Per-service Dockerfiles** (`Dockerfile.web`, `Dockerfile.worker`) +
+  `.dockerignore`. Multi-stage, pinned `node:24.18.0` + pnpm 10.6.4 via corepack:
+  install → `prisma generate` → (`next build` for web) → runtime. Build-time env
+  is throwaway placeholders; real secrets are injected by Railway at runtime and
+  never baked into an image. Both images run as the unprivileged `node` user.
+- **`next.config.ts`**: `output: 'standalone'` + `outputFileTracingRoot` (monorepo
+  root) so the build emits a self-contained server tree; verified it still builds
+  and serves. The shipped web image runs `pnpm start` so the pinned Prisma CLI
+  stays available for the release command (the standalone tree is documented as an
+  ultra-slim alternative).
+- **Railway config-as-code** (`railway.web.json`, `railway.worker.json`): Dockerfile
+  builder, `web` health check `/api/health`, and the **release/pre-deploy command**
+  `pnpm prisma migrate deploy && pnpm prisma db seed` (forward-only migrations +
+  idempotent seed). `worker` starts `pnpm worker` and is the only service holding
+  faucet/relayer/paymaster keys (Railway secrets).
+- **`DEPLOY.md`**: services, env/secrets matrix (worker-only signer keys), Volume
+  mount + `STORAGE_DRIVER=volume`, release/seed flow, health check, `main`-branch
+  auto-deploy behind the CI gate, and prod `APP_URL` / host-only `Secure` cookies /
+  `'self'`-based CSP origin.
+- **Validated locally** against isolated empty Postgres + Redis + anvil: release
+  sequence (`migrate deploy` → idempotent seed run twice) → prod `pnpm build` +
+  `pnpm start` → `/api/health` 200 healthy → `pnpm worker` boots (7 queues);
+  `docker build` of both images, web container serves health green and runs the
+  in-image release command, worker container boots online; `volume` presign/put/get
+  round-trip; secret scan clean (no secrets in client bundle or repo).
+
 ## 2026-07-16 — Full test coverage + Playwright E2E happy-path (#17)
 
 Brought the test suite up to the AGENT.md §8 bar and added the headline

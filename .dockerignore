@@ -1,0 +1,43 @@
+# Build context hygiene for Dockerfile.web / Dockerfile.worker.
+# Keep the context small and NEVER ship secrets or local build artifacts —
+# node_modules and the Prisma client are (re)installed/generated inside the image.
+
+# deps & package-manager state
+node_modules
+**/node_modules
+.pnpm-store
+
+# build output (rebuilt in-image)
+.next
+**/.next
+dist
+build
+out
+*.tsbuildinfo
+
+# generated Prisma client (regenerated via `prisma generate` in-image)
+apps/web/lib/generated
+
+# secrets & local env — never bake into an image
+.env
+.env.*
+!.env.example
+
+# Foundry / contracts (git submodules + build output; not needed by web/worker)
+packages/contracts/lib
+packages/contracts/out
+packages/contracts/cache
+packages/contracts/broadcast
+
+# tests / tooling / vcs
+e2e
+playwright-report
+test-results
+coverage
+.git
+.github
+.turbo
+*.log
+
+# local data / uploads
+/data
