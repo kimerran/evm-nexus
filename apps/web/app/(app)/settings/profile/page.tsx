@@ -30,7 +30,7 @@ export default async function ProfilePage() {
         </p>
       </header>
 
-      <Card className="max-w-xl">
+      <Card className="max-w-[36rem]">
         <h2 className="headline-md mb-md text-on-surface">Change Password</h2>
         <ChangePasswordForm />
       </Card>

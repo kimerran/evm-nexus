@@ -26,7 +26,7 @@ export default async function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-md py-lg">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-[24rem]">
         <div className="mb-lg text-center">
           <div className="mb-sm inline-flex items-center gap-xs">
             <span className="display-lg text-2xl font-extrabold text-on-surface">EVM Nexus</span>
