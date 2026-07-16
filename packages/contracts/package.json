@@ -1,0 +1,10 @@
+{
+  "name": "@nexus/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "export": "forge build && node script/export-artifacts.mjs"
+  }
+}

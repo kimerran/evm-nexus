@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+node_modules/
+.next/
+dist/
+out/
+cache/
+coverage/
+packages/contracts/out/
+packages/types/src/contracts/
+apps/web/lib/generated/

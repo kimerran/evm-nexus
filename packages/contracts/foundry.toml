@@ -1,0 +1,12 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+evm_version = "cancun"
+
+# Deployed artifacts (ABIs + bytecode) in out/ are consumed by the app; Solidity
+# is NEVER compiled at request time (AGENT.md §7).

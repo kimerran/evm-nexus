@@ -1,0 +1,40 @@
+{
+  "name": "@nexus/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nexus/config": "workspace:*",
+    "@nexus/types": "workspace:*",
+    "@node-rs/argon2": "2.0.2",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "bullmq": "5.79.2",
+    "ioredis": "5.10.1",
+    "jose": "6.2.3",
+    "next": "16.2.10",
+    "pg": "8.22.0",
+    "pino": "9.6.0",
+    "pino-http": "10.4.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "viem": "2.55.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.2",
+    "@types/node": "26.1.1",
+    "@types/pg": "8.20.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "postcss": "8.5.19",
+    "tailwindcss": "4.3.2",
+    "typescript": "5.9.3"
+  }
+}

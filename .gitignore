@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+.next/
+dist/
+out/
+build/
+*.tsbuildinfo
+
+# generated Prisma client (regenerated via `pnpm db:generate`; never committed)
+apps/web/lib/generated/
+
+# foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+
+# test / coverage
+coverage/
+playwright-report/
+test-results/
+# Playwright global-setup writes the worker PID here to tear it down after E2E.
+e2e/.worker.pid
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# local data / uploads
+/data/
+
+# misc
+.DS_Store
+*.log
+.turbo/

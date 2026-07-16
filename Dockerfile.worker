@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+#
+# EVM Nexus — `worker` service (BullMQ consumers) for Railway (SPEC §9, §14).
+#
+# The worker runs `tsx worker/index.ts` (transpiles TS on the fly) and imports
+# shared server code from apps/web/lib + the generated Prisma client, so the
+# image ships the installed workspace + a generated client — there is no bundle
+# step. This is the ONLY process that loads the operator signer keys
+# (FAUCET/RELAYER/PAYMASTER_SIGNER_PRIVATE_KEY), injected as Railway secrets at
+# runtime — never baked into the image, never exposed to the browser.
+
+# ---- base: pinned Node + pnpm via corepack ----
+FROM node:24.18.0-bookworm-slim AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.6.4 --activate
+WORKDIR /app
+
+# ---- builder: deps + prisma client ----
+FROM base AS builder
+# THROWAWAY build-time DATABASE_URL so `prisma generate` can resolve
+# env('DATABASE_URL') from prisma.config.ts (generate never connects). The real
+# value is injected by Railway at runtime.
+ENV DATABASE_URL=postgresql://build:build@localhost:5432/build?schema=public
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm prisma generate
+
+# ---- runner: production runtime ----
+FROM base AS runner
+ENV NODE_ENV=production
+COPY --from=builder /app ./
+RUN chown -R node:node /app
+USER node
+# `pnpm worker` → `tsx worker/index.ts`. No web port, no health endpoint.
+CMD ["pnpm", "worker"]
